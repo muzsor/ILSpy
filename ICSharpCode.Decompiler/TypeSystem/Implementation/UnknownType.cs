@@ -95,6 +95,10 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 			get { return namespaceKnown ? fullTypeName.ReflectionName : "?"; }
 		}
 
+		public override string FullName {
+			get { return namespaceKnown ? fullTypeName.FullName : "?"; }
+		}
+
 		public FullTypeName FullTypeName => fullTypeName;
 
 		public override int TypeParameterCount => fullTypeName.TypeParameterCount;
@@ -107,7 +111,7 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 
 		public override IType ChangeNullability(Nullability nullability)
 		{
-			if (nullability == Nullability.Oblivious)
+			if (nullability == Nullability.Oblivious || isReferenceType == false)
 				return this;
 			else
 				return new NullabilityAnnotatedType(this, nullability);

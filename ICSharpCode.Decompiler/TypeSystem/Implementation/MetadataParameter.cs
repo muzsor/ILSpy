@@ -21,7 +21,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
-using System.Text;
 
 using ICSharpCode.Decompiler.Util;
 
@@ -64,16 +63,22 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 			var metadata = module.metadata;
 			var parameter = metadata.GetParameter(handle);
 
-			if (IsOptional && !HasConstantValueInSignature)
-				b.Add(KnownAttribute.Optional);
+			bool defaultValueAssignmentAllowed = ReferenceKind is ReferenceKind.None or ReferenceKind.In or ReferenceKind.RefReadOnly;
 
-			if (!IsOut && !IsIn)
+			if (IsOptional && (!defaultValueAssignmentAllowed || !HasConstantValueInSignature))
 			{
-				if ((attributes & ParameterAttributes.In) == ParameterAttributes.In)
-					b.Add(KnownAttribute.In);
-				if ((attributes & ParameterAttributes.Out) == ParameterAttributes.Out)
-					b.Add(KnownAttribute.Out);
+				b.Add(KnownAttribute.Optional);
 			}
+
+			if (!(IsDecimalConstant || !HasConstantValueInSignature) && (!defaultValueAssignmentAllowed || !IsOptional))
+			{
+				b.Add(KnownAttribute.DefaultParameterValue, KnownTypeCode.Object, GetConstantValue(throwOnInvalidMetadata: false));
+			}
+
+			if ((attributes & ParameterAttributes.In) == ParameterAttributes.In && ReferenceKind is not (ReferenceKind.In or ReferenceKind.RefReadOnly))
+				b.Add(KnownAttribute.In);
+			if ((attributes & ParameterAttributes.Out) == ParameterAttributes.Out && ReferenceKind != ReferenceKind.Out)
+				b.Add(KnownAttribute.Out);
 			b.Add(parameter.GetCustomAttributes(), SymbolKind.Parameter);
 			b.AddMarshalInfo(parameter.GetMarshallingDescriptor());
 
@@ -84,9 +89,6 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 		const ParameterAttributes inOut = ParameterAttributes.In | ParameterAttributes.Out;
 
 		public ReferenceKind ReferenceKind => DetectRefKind();
-		public bool IsRef => DetectRefKind() == ReferenceKind.Ref;
-		public bool IsOut => Type.Kind == TypeKind.ByReference && (attributes & inOut) == ParameterAttributes.Out;
-		public bool IsIn => DetectRefKind() == ReferenceKind.In;
 
 		public bool IsOptional => (attributes & ParameterAttributes.Optional) != 0;
 
@@ -103,37 +105,30 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 				if (parameterDef.GetCustomAttributes().HasKnownAttribute(metadata, KnownAttribute.IsReadOnly))
 					return ReferenceKind.In;
 			}
+			if ((module.TypeSystemOptions & TypeSystemOptions.RefReadOnlyParameters) != 0
+				&& (attributes & inOut) == ParameterAttributes.In)
+			{
+				var metadata = module.metadata;
+				var parameterDef = metadata.GetParameter(handle);
+				if (parameterDef.GetCustomAttributes().HasKnownAttribute(metadata, KnownAttribute.RequiresLocation))
+					return ReferenceKind.RefReadOnly;
+			}
 			return ReferenceKind.Ref;
 		}
 
 		public LifetimeAnnotation Lifetime {
 			get {
-				if ((module.TypeSystemOptions & TypeSystemOptions.LifetimeAnnotations) == 0)
+				if ((module.TypeSystemOptions & TypeSystemOptions.ScopedRef) == 0)
 				{
 					return default;
 				}
 
 				var metadata = module.metadata;
 				var parameterDef = metadata.GetParameter(handle);
-				foreach (var h in parameterDef.GetCustomAttributes())
+				if (parameterDef.GetCustomAttributes().HasKnownAttribute(metadata, KnownAttribute.ScopedRef))
 				{
-					var custom = metadata.GetCustomAttribute(h);
-					if (!custom.IsKnownAttribute(metadata, KnownAttribute.LifetimeAnnotation))
-						continue;
-
-					var value = custom.DecodeValue(module.TypeProvider);
-					if (value.FixedArguments.Length != 2)
-						continue;
-					if (value.FixedArguments[0].Value is bool refScoped
-						&& value.FixedArguments[1].Value is bool valueScoped)
-					{
-						return new LifetimeAnnotation {
-							RefScoped = refScoped,
-							ValueScoped = valueScoped
-						};
-					}
+					return new LifetimeAnnotation { ScopedRef = true };
 				}
-
 				return default;
 			}
 		}

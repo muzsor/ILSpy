@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Threading;
+using System.Threading.Tasks;
 
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
@@ -17,9 +18,12 @@ using ICSharpCode.Decompiler.Disassembler;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.Solution;
 using ICSharpCode.Decompiler.TypeSystem;
+using ICSharpCode.ILSpyX.MermaidDiagrammer;
 using ICSharpCode.ILSpyX.PdbProvider;
 
 using McMaster.Extensions.CommandLineUtils;
+
+using Microsoft.Extensions.Hosting;
 
 namespace ICSharpCode.ILSpyCmd
 {
@@ -41,6 +45,13 @@ Examples:
     Decompile assembly to destination directory, create a project file, one source file per type, 
     into nicely nested directories.
         ilspycmd --nested-directories -p -o c:\decompiled sample.dll
+
+    Generate a HTML diagrammer containing all type info into a folder next to the input assembly
+        ilspycmd sample.dll --generate-diagrammer
+
+    Generate a HTML diagrammer containing filtered type info into a custom output folder
+    (including types in the LightJson namespace while excluding types in nested LightJson.Serialization namespace)
+        ilspycmd sample.dll --generate-diagrammer -o c:\diagrammer --generate-diagrammer-include LightJson\\..+ --generate-diagrammer-exclude LightJson\\.Serialization\\..+
 ")]
 	[HelpOption("-h|--help")]
 	[ProjectOptionRequiresOutputDirectoryValidation]
@@ -48,7 +59,9 @@ Examples:
 		MemberName = nameof(DecompilerVersion))]
 	class ILSpyCmdProgram
 	{
-		public static int Main(string[] args) => CommandLineApplication.Execute<ILSpyCmdProgram>(args);
+		// https://natemcmaster.github.io/CommandLineUtils/docs/advanced/generic-host.html
+		// https://github.com/natemcmaster/CommandLineUtils/blob/main/docs/samples/dependency-injection/generic-host/Program.cs
+		public static Task<int> Main(string[] args) => new HostBuilder().RunCommandLineApplicationAsync<ILSpyCmdProgram>(args);
 
 		[FilesExist]
 		[Required]
@@ -92,7 +105,7 @@ Examples:
 
 		[DirectoryExists]
 		[Option("-r|--referencepath <path>", "Path to a directory containing dependencies of the assembly that is being decompiled.", CommandOptionType.MultipleValue)]
-		public string[] ReferencePaths { get; } = new string[0];
+		public string[] ReferencePaths { get; }
 
 		[Option("--no-dead-code", "Remove dead code.", CommandOptionType.NoValue)]
 		public bool RemoveDeadCode { get; }
@@ -100,14 +113,69 @@ Examples:
 		[Option("--no-dead-stores", "Remove dead stores.", CommandOptionType.NoValue)]
 		public bool RemoveDeadStores { get; }
 
-		[Option("-d|--dump-package", "Dump package assembiles into a folder. This requires the output directory option.", CommandOptionType.NoValue)]
+		[Option("-d|--dump-package", "Dump package assemblies into a folder. This requires the output directory option.", CommandOptionType.NoValue)]
 		public bool DumpPackageFlag { get; }
 
 		[Option("--nested-directories", "Use nested directories for namespaces.", CommandOptionType.NoValue)]
 		public bool NestedDirectories { get; }
 
-		private int OnExecute(CommandLineApplication app)
+		[Option("--disable-updatecheck", "If using ilspycmd in a tight loop or fully automated scenario, you might want to disable the automatic update check.", CommandOptionType.NoValue)]
+		public bool DisableUpdateCheck { get; }
+
+		#region MermaidDiagrammer options
+
+		// reused or quoted commands
+		private const string generateDiagrammerCmd = "--generate-diagrammer",
+			exclude = generateDiagrammerCmd + "-exclude",
+			include = generateDiagrammerCmd + "-include";
+
+		[Option(generateDiagrammerCmd, "Generates an interactive HTML diagrammer app from selected types in the target assembly" +
+			" - to the --outputdir or in a 'diagrammer' folder next to to the assembly by default.", CommandOptionType.NoValue)]
+		public bool GenerateDiagrammer { get; }
+
+		[Option(include, "An optional regular expression matching Type.FullName used to whitelist types to include in the generated diagrammer.", CommandOptionType.SingleValue)]
+		public string Include { get; set; }
+
+		[Option(exclude, "An optional regular expression matching Type.FullName used to blacklist types to exclude from the generated diagrammer.", CommandOptionType.SingleValue)]
+		public string Exclude { get; set; }
+
+		[Option(generateDiagrammerCmd + "-report-excluded", "Outputs a report of types excluded from the generated diagrammer" +
+			$" - whether by default because compiler-generated, explicitly by '{exclude}' or implicitly by '{include}'." +
+			" You may find this useful to develop and debug your regular expressions.", CommandOptionType.NoValue)]
+		public bool ReportExludedTypes { get; set; }
+
+		[Option(generateDiagrammerCmd + "-docs", "The path or file:// URI of the XML file containing the target assembly's documentation comments." +
+			" You only need to set this if a) you want your diagrams annotated with them and b) the file name differs from that of the assmbly." +
+			" To enable XML documentation output for your assmbly, see https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/xmldoc/#create-xml-documentation-output",
+			CommandOptionType.SingleValue)]
+		public string XmlDocs { get; set; }
+
+		/// <inheritdoc cref="ILSpyX.MermaidDiagrammer.GenerateHtmlDiagrammer.StrippedNamespaces" />
+		[Option(generateDiagrammerCmd + "-strip-namespaces", "Optional space-separated namespace names that are removed for brevity from XML documentation comments." +
+			" Note that the order matters: e.g. replace 'System.Collections' before 'System' to remove both of them completely.", CommandOptionType.MultipleValue)]
+		public string[] StrippedNamespaces { get; set; }
+
+		[Option(generateDiagrammerCmd + "-json-only",
+			"Whether to generate a model.json file instead of baking it into the HTML template." +
+			" This is useful for the HTML/JS/CSS development loop.", CommandOptionType.NoValue,
+			ShowInHelpText = false)] // developer option, output is really only useful in combination with the corresponding task in html/gulpfile.js
+		public bool JsonOnly { get; set; }
+		#endregion
+
+		private readonly IHostEnvironment _env;
+		public ILSpyCmdProgram(IHostEnvironment env)
 		{
+			_env = env;
+		}
+
+		private async Task<int> OnExecuteAsync(CommandLineApplication app)
+		{
+			Task<PackageCheckResult> updateCheckTask = null;
+			if (!DisableUpdateCheck)
+			{
+				updateCheckTask = DotNetToolUpdateChecker.CheckForPackageUpdateAsync("ilspycmd");
+			}
+
 			TextWriter output = System.Console.Out;
 			string outputDirectory = ResolveOutputDirectory(OutputDirectory);
 
@@ -137,6 +205,26 @@ Examples:
 					SolutionCreator.WriteSolutionFile(Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(outputDirectory) + ".sln"), projects);
 					return 0;
 				}
+				else if (GenerateDiagrammer)
+				{
+					foreach (var file in InputAssemblyNames)
+					{
+						var command = new GenerateHtmlDiagrammer {
+							Assembly = file,
+							OutputFolder = OutputDirectory,
+							Include = Include,
+							Exclude = Exclude,
+							ReportExludedTypes = ReportExludedTypes,
+							JsonOnly = JsonOnly,
+							XmlDocs = XmlDocs,
+							StrippedNamespaces = StrippedNamespaces
+						};
+
+						command.Run();
+					}
+
+					return 0;
+				}
 				else
 				{
 					foreach (var file in InputAssemblyNames)
@@ -156,6 +244,16 @@ Examples:
 			finally
 			{
 				output.Close();
+
+				if (null != updateCheckTask)
+				{
+					var checkResult = await updateCheckTask;
+					if (null != checkResult && checkResult.UpdateRecommendation)
+					{
+						Console.WriteLine("You are not using the latest version of the tool, please update.");
+						Console.WriteLine($"Latest version is '{checkResult.LatestVersion}' (yours is '{checkResult.RunningVersion}')");
+					}
+				}
 			}
 
 			int PerformPerFileAction(string fileName)
@@ -240,7 +338,7 @@ Examples:
 		{
 			var module = new PEFile(assemblyFileName);
 			var resolver = new UniversalAssemblyResolver(assemblyFileName, false, module.Metadata.DetectTargetFrameworkId());
-			foreach (var path in ReferencePaths)
+			foreach (var path in (ReferencePaths ?? Array.Empty<string>()))
 			{
 				resolver.AddSearchDirectory(path);
 			}
@@ -278,11 +376,11 @@ Examples:
 		{
 			var module = new PEFile(assemblyFileName);
 			var resolver = new UniversalAssemblyResolver(assemblyFileName, false, module.Metadata.DetectTargetFrameworkId());
-			foreach (var path in ReferencePaths)
+			foreach (var path in (ReferencePaths ?? Array.Empty<string>()))
 			{
 				resolver.AddSearchDirectory(path);
 			}
-			var decompiler = new WholeProjectDecompiler(GetSettings(module), resolver, resolver, TryLoadPDB(module));
+			var decompiler = new WholeProjectDecompiler(GetSettings(module), resolver, null, resolver, TryLoadPDB(module));
 			using (var projectFileWriter = new StreamWriter(File.OpenWrite(projectFileName)))
 				return decompiler.DecompileProject(module, Path.GetDirectoryName(projectFileName), projectFileWriter);
 		}

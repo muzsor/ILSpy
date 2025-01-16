@@ -189,15 +189,16 @@ namespace ICSharpCode.Decompiler.Metadata
 				switch (pair[0].Trim().ToUpperInvariant())
 				{
 					case "VERSION":
-						var versionString = pair[1].TrimStart('v', ' ', '\t');
-						if (identifier == TargetFrameworkIdentifier.NETCoreApp ||
-							identifier == TargetFrameworkIdentifier.NETStandard)
-						{
-							if (versionString.Length == 3)
-								versionString += ".0";
-						}
+						var versionString = pair[1].TrimStart('v', 'V', ' ', '\t');
+
 						if (!Version.TryParse(versionString, out version))
+						{
 							version = null;
+						}
+						else
+						{
+							version = new Version(version.Major, version.Minor, version.Build < 0 ? 0 : version.Build);
+						}
 						// .NET 5 or greater still use ".NETCOREAPP" as TargetFrameworkAttribute value...
 						if (version?.Major >= 5 && identifier == TargetFrameworkIdentifier.NETCoreApp)
 							identifier = TargetFrameworkIdentifier.NET;
@@ -209,13 +210,13 @@ namespace ICSharpCode.Decompiler.Metadata
 		}
 
 #if !VSADDIN
-		public PEFile? Resolve(IAssemblyReference name)
+		public MetadataFile? Resolve(IAssemblyReference name)
 		{
 			var file = FindAssemblyFile(name);
 			return CreatePEFileFromFileName(file, ex => new ResolutionException(name, file, ex));
 		}
 
-		public PEFile? ResolveModule(PEFile mainModule, string moduleName)
+		public MetadataFile? ResolveModule(MetadataFile mainModule, string moduleName)
 		{
 			string? baseDirectory = Path.GetDirectoryName(mainModule.FileName);
 			if (baseDirectory == null)
@@ -224,7 +225,7 @@ namespace ICSharpCode.Decompiler.Metadata
 			return CreatePEFileFromFileName(moduleFileName, ex => new ResolutionException(mainModule.FileName, moduleName, moduleFileName, ex));
 		}
 
-		private PEFile? CreatePEFileFromFileName(string? fileName, Func<Exception?, Exception> makeException)
+		private MetadataFile? CreatePEFileFromFileName(string? fileName, Func<Exception?, Exception> makeException)
 		{
 			if (fileName == null)
 			{
@@ -251,12 +252,12 @@ namespace ICSharpCode.Decompiler.Metadata
 			return null;
 		}
 
-		public Task<PEFile?> ResolveAsync(IAssemblyReference name)
+		public Task<MetadataFile?> ResolveAsync(IAssemblyReference name)
 		{
 			return Task.Run(() => Resolve(name));
 		}
 
-		public Task<PEFile?> ResolveModuleAsync(PEFile mainModule, string moduleName)
+		public Task<MetadataFile?> ResolveModuleAsync(MetadataFile mainModule, string moduleName)
 		{
 			return Task.Run(() => ResolveModule(mainModule, moduleName));
 		}
@@ -386,11 +387,11 @@ namespace ICSharpCode.Decompiler.Metadata
 		string FindClosestVersionDirectory(string basePath, Version? version)
 		{
 			string? path = null;
-			foreach (var folder in new DirectoryInfo(basePath).GetDirectories().Select(d => DotNetCorePathFinder.ConvertToVersion(d.Name))
+			foreach (var folder in new DirectoryInfo(basePath).GetDirectories().Select(DotNetCorePathFinder.ConvertToVersion)
 				.Where(v => v.Item1 != null).OrderByDescending(v => v.Item1))
 			{
 				if (path == null || version == null || folder.Item1 >= version)
-					path = folder.Item2;
+					path = folder.Item2.Name;
 			}
 			return path ?? version?.ToString() ?? ".";
 		}
@@ -404,10 +405,37 @@ namespace ICSharpCode.Decompiler.Metadata
 			if (assembly != null)
 				return assembly;
 
-			var framework_dir = Path.GetDirectoryName(typeof(object).Module.FullyQualifiedName)!;
-			var framework_dirs = decompilerRuntime == DecompilerRuntime.Mono
-				? new[] { framework_dir, Path.Combine(framework_dir, "Facades") }
-				: new[] { framework_dir };
+			string[] framework_dirs;
+			string framework_dir;
+
+			switch (decompilerRuntime)
+			{
+				case DecompilerRuntime.Mono:
+					framework_dir = Path.GetDirectoryName(typeof(object).Module.FullyQualifiedName)!;
+					framework_dirs = new[] { framework_dir, Path.Combine(framework_dir, "Facades") };
+					break;
+				case DecompilerRuntime.NETCoreApp:
+					string windir;
+					try
+					{
+						windir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+						if (string.IsNullOrEmpty(windir))
+						{
+							goto default;
+						}
+					}
+					catch (PlatformNotSupportedException)
+					{
+						goto default;
+					}
+					framework_dir = Path.Combine(windir, "Microsoft.NET", "Framework64", "v4.0.30319");
+					framework_dirs = new[] { framework_dir };
+					break;
+				default:
+					framework_dir = Path.GetDirectoryName(typeof(object).Module.FullyQualifiedName)!;
+					framework_dirs = new[] { framework_dir };
+					break;
+			}
 
 			if (IsSpecialVersionOrRetargetable(name))
 			{
@@ -723,16 +751,22 @@ namespace ICSharpCode.Decompiler.Metadata
 						continue;
 					foreach (var item in new DirectoryInfo(rootPath).EnumerateFiles("*.dll", SearchOption.AllDirectories))
 					{
-						string[]? name = Path.GetDirectoryName(item.FullName)?.Substring(rootPath.Length + 1).Split(new[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
-						if (name?.Length != 2)
-							continue;
-						var match = Regex.Match(name[1], $"(v4.0_)?(?<version>[^_]+)_(?<culture>[^_]+)?_(?<publicKey>[^_]+)");
-						if (!match.Success)
-							continue;
-						string culture = match.Groups["culture"].Value;
-						if (string.IsNullOrEmpty(culture))
-							culture = "neutral";
-						yield return AssemblyNameReference.Parse(name[0] + ", Version=" + match.Groups["version"].Value + ", Culture=" + culture + ", PublicKeyToken=" + match.Groups["publicKey"].Value);
+						// The root of the GAC should only contain folders, but make sure we handle the case where it does NOT in case
+						// someone has a non-standard layout (e.g. due to a broken installer).
+						string? assemblyParentPath = Path.GetDirectoryName(item.FullName);
+						if (assemblyParentPath?.Length > rootPath.Length)
+						{
+							string[]? name = assemblyParentPath.Substring(rootPath.Length + 1).Split(new[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
+							if (name?.Length != 2)
+								continue;
+							var match = Regex.Match(name[1], $"(v4.0_)?(?<version>[^_]+)_(?<culture>[^_]+)?_(?<publicKey>[^_]+)");
+							if (!match.Success)
+								continue;
+							string culture = match.Groups["culture"].Value;
+							if (string.IsNullOrEmpty(culture))
+								culture = "neutral";
+							yield return AssemblyNameReference.Parse(name[0] + ", Version=" + match.Groups["version"].Value + ", Culture=" + culture + ", PublicKeyToken=" + match.Groups["publicKey"].Value);
+						}
 					}
 				}
 			}

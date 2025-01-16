@@ -167,6 +167,8 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 			"System.Runtime.CompilerServices.NullableContextAttribute",
 			"System.Runtime.CompilerServices.NativeIntegerAttribute",
 			"System.Runtime.CompilerServices.RefSafetyRulesAttribute",
+			"System.Runtime.CompilerServices.ScopedRefAttribute",
+			"System.Runtime.CompilerServices.RequiresLocationAttribute",
 			"Microsoft.CodeAnalysis.EmbeddedAttribute",
 		};
 

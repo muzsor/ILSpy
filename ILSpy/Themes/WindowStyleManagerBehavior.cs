@@ -16,12 +16,18 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+using System;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Media;
 
 using ICSharpCode.ILSpy.Options;
 
+using TomsToolbox.Essentials;
 using TomsToolbox.Wpf;
+using TomsToolbox.Wpf.Composition;
 using TomsToolbox.Wpf.Interactivity;
 
 namespace ICSharpCode.ILSpy.Themes
@@ -30,32 +36,46 @@ namespace ICSharpCode.ILSpy.Themes
 	{
 		private static readonly DispatcherThrottle restartNotificationThrottle = new DispatcherThrottle(ShowRestartNotification);
 
+		private INotifyChanged _foreground;
+		private INotifyChanged _background;
+
 		protected override void OnAttached()
 		{
 			base.OnAttached();
 
-			MainWindow.Instance.CurrentDisplaySettings.PropertyChanged += DisplaySettings_PropertyChanged;
+			MessageBus<SettingsChangedEventArgs>.Subscribers += (sender, e) => Settings_PropertyChanged(sender, e);
 
-			UpdateWindowStyle();
+			_foreground = AssociatedObject.Track(Control.ForegroundProperty);
+			_background = AssociatedObject.Track(Control.BackgroundProperty);
 
+			_foreground.Changed += Color_Changed;
+			_background.Changed += Color_Changed;
+
+			UpdateWindowStyle(AssociatedObject.GetExportProvider().GetExportedValue<SettingsService>().DisplaySettings);
+			ApplyThemeToWindowCaption();
 		}
 
 		protected override void OnDetaching()
 		{
 			base.OnDetaching();
 
-			MainWindow.Instance.CurrentDisplaySettings.PropertyChanged -= DisplaySettings_PropertyChanged;
+			_foreground.Changed -= Color_Changed;
+			_background.Changed -= Color_Changed;
 		}
 
-		private void UpdateWindowStyle()
+		private void Color_Changed(object sender, EventArgs e)
 		{
-			if (!MainWindow.Instance.CurrentDisplaySettings.StyleWindowTitleBar)
-			{
-				return;
-			}
+			ApplyThemeToWindowCaption();
+		}
 
+		private void UpdateWindowStyle(DisplaySettings displaySettings)
+		{
 			var window = AssociatedObject;
-			window.Style = (Style)window.FindResource(TomsToolbox.Wpf.Styles.ResourceKeys.WindowStyle);
+
+			if (displaySettings.StyleWindowTitleBar)
+			{
+				window.Style = (Style)window.FindResource(TomsToolbox.Wpf.Styles.ResourceKeys.WindowStyle);
+			}
 		}
 
 		private static void ShowRestartNotification()
@@ -63,17 +83,47 @@ namespace ICSharpCode.ILSpy.Themes
 			MessageBox.Show(Properties.Resources.SettingsChangeRestartRequired);
 		}
 
-		private void DisplaySettings_PropertyChanged(object sender, PropertyChangedEventArgs e)
+		private void Settings_PropertyChanged(object sender, PropertyChangedEventArgs e)
 		{
-			if (e.PropertyName == nameof(DisplaySettingsViewModel.StyleWindowTitleBar))
+			if (sender is not DisplaySettings displaySettings)
+				return;
+
+			if (e.PropertyName != nameof(DisplaySettings.StyleWindowTitleBar))
+				return;
+
+			if (!displaySettings.StyleWindowTitleBar)
 			{
-				if (!MainWindow.Instance.CurrentDisplaySettings.StyleWindowTitleBar)
+				restartNotificationThrottle.Tick();
+				return;
+			}
+
+			UpdateWindowStyle(displaySettings);
+		}
+
+		private void ApplyThemeToWindowCaption()
+		{
+			var window = AssociatedObject;
+
+			IntPtr hwnd = new WindowInteropHelper(window).Handle;
+
+			if (hwnd != IntPtr.Zero)
+			{
+				var foreground = ((window.Foreground as SolidColorBrush)?.Color).ToGray();
+				var background = ((window.Background as SolidColorBrush)?.Color).ToGray();
+
+				var isDarkTheme = background < foreground;
+
+				NativeMethods.UseImmersiveDarkMode(hwnd, isDarkTheme);
+			}
+			else
+			{
+				void Initialized(object o, EventArgs eventArgs)
 				{
-					restartNotificationThrottle.Tick();
-					return;
+					ApplyThemeToWindowCaption();
+					window.SourceInitialized -= Initialized;
 				}
 
-				UpdateWindowStyle();
+				window.SourceInitialized += Initialized;
 			}
 		}
 	}

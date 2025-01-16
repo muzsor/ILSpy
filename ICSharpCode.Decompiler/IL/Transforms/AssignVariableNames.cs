@@ -55,9 +55,9 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 		ILTransformContext context;
 		List<string> currentLowerCaseTypeOrMemberNames;
 		Dictionary<string, int> reservedVariableNames;
-		Dictionary<MethodDefinitionHandle, string> localFunctionMapping;
 		HashSet<ILVariable> loopCounters;
 		const char maxLoopVariableName = 'n';
+		int numDisplayClassLocals;
 
 		public void Run(ILFunction function, ILTransformContext context)
 		{
@@ -74,7 +74,6 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				currentLowerCaseTypeOrMemberNames.Add(name);
 				AddExistingName(reservedVariableNames, name);
 			}
-			localFunctionMapping = new Dictionary<MethodDefinitionHandle, string>();
 			loopCounters = CollectLoopCounters(function);
 			foreach (var f in function.Descendants.OfType<ILFunction>())
 			{
@@ -151,10 +150,8 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 						AddExistingName(reservedVariableNames, p.Name);
 				}
 			}
-			foreach (ILFunction f in function.Descendants.OfType<ILFunction>().Reverse())
-			{
-				PerformAssignment(f);
-			}
+			numDisplayClassLocals = 0;
+			PerformAssignment(function);
 		}
 
 		static IEnumerable<string> CollectAllLowerCaseMemberNames(ITypeDefinition type)
@@ -193,109 +190,133 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 
 		void PerformAssignment(ILFunction function)
 		{
-			// remove unused variables before assigning names
-			function.Variables.RemoveDead();
-			int numDisplayClassLocals = 0;
-			Dictionary<int, string> assignedLocalSignatureIndices = new Dictionary<int, string>();
-			foreach (var v in function.Variables.OrderBy(v => v.Name))
+			var localFunctionMapping = new Dictionary<MethodDefinitionHandle, string>();
+			var variableMapping = new Dictionary<ILVariable, string>(ILVariableEqualityComparer.Instance);
+			var assignedLocalSignatureIndices = new Dictionary<(ILFunction, int), string>();
+
+			foreach (var inst in function.Descendants)
 			{
-				switch (v.Kind)
+				if (inst is ILFunction { Kind: ILFunctionKind.LocalFunction } localFunction)
 				{
-					case VariableKind.Parameter: // ignore
-						break;
-					case VariableKind.InitializerTarget: // keep generated names
-						AddExistingName(reservedVariableNames, v.Name);
-						break;
-					case VariableKind.DisplayClassLocal:
-						v.Name = "CS$<>8__locals" + (numDisplayClassLocals++);
-						break;
-					case VariableKind.Local when v.Index != null:
-						if (assignedLocalSignatureIndices.TryGetValue(v.Index.Value, out string name))
+					// assign names to local functions
+					if (!LocalFunctionDecompiler.ParseLocalFunctionName(localFunction.Name, out _, out var newName) || !IsValidName(newName))
+						newName = null;
+					if (newName == null)
+					{
+						string nameWithoutNumber = "f";
+						if (!reservedVariableNames.TryGetValue(nameWithoutNumber, out int currentIndex))
 						{
-							// make sure all local ILVariables that refer to the same slot in the locals signature
-							// are assigned the same name.
-							v.Name = name;
+							currentIndex = 1;
+						}
+						int count = Math.Max(1, currentIndex) + 1;
+						reservedVariableNames[nameWithoutNumber] = count;
+						if (count > 1)
+						{
+							newName = nameWithoutNumber + count.ToString();
 						}
 						else
 						{
-							AssignName();
-							// Remember the newly assigned name:
-							assignedLocalSignatureIndices.Add(v.Index.Value, v.Name);
+							newName = nameWithoutNumber;
 						}
-						break;
-					default:
-						AssignName();
-						break;
+					}
+					localFunction.Name = newName;
+					localFunction.ReducedMethod.Name = newName;
+					localFunctionMapping[(MethodDefinitionHandle)localFunction.ReducedMethod.MetadataToken] = newName;
 				}
+				else if (inst is IInstructionWithVariableOperand i)
+				{
+					var v = i.Variable;
+					// if there is already a valid name for the variable slot, just use it
+					if (variableMapping.TryGetValue(v, out string name))
+					{
+						v.Name = name;
+						continue;
+					}
+					switch (v.Kind)
+					{
+						case VariableKind.Parameter:
+							// Parameter names are handled in ILReader.CreateILVariable
+							// and CSharpDecompiler.FixParameterNames
+							break;
+						case VariableKind.InitializerTarget: // keep generated names
+							AddExistingName(reservedVariableNames, v.Name);
+							break;
+						case VariableKind.DisplayClassLocal:
+							v.Name = "CS$<>8__locals" + (numDisplayClassLocals++);
+							break;
+						case VariableKind.Local when v.Index != null:
+							if (assignedLocalSignatureIndices.TryGetValue((v.Function, v.Index.Value), out name))
+							{
+								// make sure all local ILVariables that refer to the same slot in the locals signature
+								// are assigned the same name.
+								v.Name = name;
+							}
+							else
+							{
+								v.Name = AssignName(v, variableMapping);
+								// Remember the newly assigned name:
+								assignedLocalSignatureIndices.Add((v.Function, v.Index.Value), v.Name);
+							}
+							break;
+						default:
+							v.Name = AssignName(v, variableMapping);
+							break;
+					}
+				}
+				else if (inst is (Call or LdFtn) and IInstructionWithMethodOperand m)
+				{
+					// update references to local functions
+					if (m.Method is LocalFunctionMethod lf
+						&& localFunctionMapping.TryGetValue((MethodDefinitionHandle)lf.MetadataToken, out var name))
+					{
+						lf.Name = name;
+					}
+				}
+			}
+		}
 
-				void AssignName()
+		string AssignName(ILVariable v, Dictionary<ILVariable, string> variableMapping)
+		{
+			// variable has no valid name
+			string newName = v.Name;
+			if (v.HasGeneratedName || !IsValidName(newName))
+			{
+				// don't use the name from the debug symbols if it looks like a generated name
+				// generate a new one based on how the variable is used
+				newName = GenerateNameForVariable(v);
+			}
+			// use the existing name and update index appended to future conflicts
+			string nameWithoutNumber = SplitName(newName, out int newIndex);
+			if (reservedVariableNames.TryGetValue(nameWithoutNumber, out int lastUsedIndex))
+			{
+				if (v.Type.IsKnownType(KnownTypeCode.Int32) && loopCounters.Contains(v))
 				{
-					if (v.HasGeneratedName || !IsValidName(v.Name) || ConflictWithLocal(v))
-					{
-						// don't use the name from the debug symbols if it looks like a generated name
-						v.Name = null;
-					}
-					else
-					{
-						// use the name from the debug symbols
-						// (but ensure we don't use the same name for two variables)
-						v.Name = GetAlternativeName(v.Name);
-					}
+					// special case for loop counters,
+					// we don't want them to be named i, i2, ..., but i, j, ...
+					newName = GenerateNameForVariable(v);
+					nameWithoutNumber = newName;
+					newIndex = 1;
 				}
 			}
-			foreach (var localFunction in function.LocalFunctions)
+			if (reservedVariableNames.TryGetValue(nameWithoutNumber, out lastUsedIndex))
 			{
-				if (!LocalFunctionDecompiler.ParseLocalFunctionName(localFunction.Name, out _, out var newName) || !IsValidName(newName))
-					newName = null;
-				localFunction.Name = newName;
-				localFunction.ReducedMethod.Name = newName;
-			}
-			// Now generate names:
-			var mapping = new Dictionary<ILVariable, string>(ILVariableEqualityComparer.Instance);
-			foreach (var inst in function.Descendants.OfType<IInstructionWithVariableOperand>())
-			{
-				var v = inst.Variable;
-				if (!mapping.TryGetValue(v, out string name))
+				// name without number was already used
+				if (newIndex > lastUsedIndex)
 				{
-					if (string.IsNullOrEmpty(v.Name))
-						v.Name = GenerateNameForVariable(v);
-					mapping.Add(v, v.Name);
+					// new index is larger than last, so we can use it
 				}
 				else
 				{
-					v.Name = name;
+					// new index is smaller or equal, so we use the next value
+					newIndex = lastUsedIndex + 1;
 				}
+				// resolve conflicts by appending the index to the new name:
+				newName = nameWithoutNumber + newIndex.ToString();
 			}
-			foreach (var localFunction in function.LocalFunctions)
-			{
-				var newName = localFunction.Name;
-				if (newName == null)
-				{
-					newName = GetAlternativeName("f");
-				}
-				localFunction.Name = newName;
-				localFunction.ReducedMethod.Name = newName;
-				localFunctionMapping[(MethodDefinitionHandle)localFunction.ReducedMethod.MetadataToken] = newName;
-			}
-			foreach (var inst in function.Descendants)
-			{
-				LocalFunctionMethod localFunction;
-				switch (inst)
-				{
-					case Call call:
-						localFunction = call.Method as LocalFunctionMethod;
-						break;
-					case LdFtn ldftn:
-						localFunction = ldftn.Method as LocalFunctionMethod;
-						break;
-					default:
-						localFunction = null;
-						break;
-				}
-				if (localFunction == null || !localFunctionMapping.TryGetValue((MethodDefinitionHandle)localFunction.MetadataToken, out var name))
-					continue;
-				localFunction.Name = name;
-			}
+			// update the last used index
+			reservedVariableNames[nameWithoutNumber] = newIndex;
+			variableMapping.Add(v, newName);
+			return newName;
 		}
 
 		/// <remarks>
@@ -305,6 +326,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 		{
 			switch (arg)
 			{
+				case GetPinnableReference _:
 				case LdObj _:
 				case LdFlda _:
 				case LdsFlda _:
@@ -315,19 +337,9 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			}
 		}
 
-		bool ConflictWithLocal(ILVariable v)
+		internal static bool IsValidName(string varName)
 		{
-			if (v.Kind == VariableKind.UsingLocal || v.Kind == VariableKind.ForeachLocal)
-			{
-				if (reservedVariableNames.ContainsKey(v.Name))
-					return true;
-			}
-			return false;
-		}
-
-		static bool IsValidName(string varName)
-		{
-			if (string.IsNullOrEmpty(varName))
+			if (string.IsNullOrWhiteSpace(varName))
 				return false;
 			if (!(char.IsLetter(varName[0]) || varName[0] == '_'))
 				return false;
@@ -337,42 +349,6 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					return false;
 			}
 			return true;
-		}
-
-		public string GetAlternativeName(string oldVariableName)
-		{
-			if (oldVariableName.Length == 1 && oldVariableName[0] >= 'i' && oldVariableName[0] <= maxLoopVariableName)
-			{
-				for (char c = 'i'; c <= maxLoopVariableName; c++)
-				{
-					if (!reservedVariableNames.ContainsKey(c.ToString()))
-					{
-						reservedVariableNames.Add(c.ToString(), 1);
-						return c.ToString();
-					}
-				}
-			}
-
-			string nameWithoutDigits = SplitName(oldVariableName, out int number);
-
-			if (!reservedVariableNames.ContainsKey(nameWithoutDigits))
-			{
-				reservedVariableNames.Add(nameWithoutDigits, number - 1);
-			}
-			int count = ++reservedVariableNames[nameWithoutDigits];
-			string nameWithDigits = nameWithoutDigits + count.ToString();
-			if (oldVariableName == nameWithDigits)
-			{
-				return oldVariableName;
-			}
-			if (count != 1)
-			{
-				return nameWithDigits;
-			}
-			else
-			{
-				return nameWithoutDigits;
-			}
 		}
 
 		HashSet<ILVariable> CollectLoopCounters(ILFunction function)
@@ -431,12 +407,31 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			}
 			if (string.IsNullOrEmpty(proposedName))
 			{
-				var proposedNameForStores = variable.StoreInstructions.OfType<StLoc>()
-					.Select(expr => GetNameFromInstruction(expr.Value))
-					.Except(currentLowerCaseTypeOrMemberNames).ToList();
+				var proposedNameForStores = new HashSet<string>();
+				foreach (var store in variable.StoreInstructions)
+				{
+					if (store is StLoc stloc)
+					{
+						var name = GetNameFromInstruction(stloc.Value);
+						if (!currentLowerCaseTypeOrMemberNames.Contains(name))
+							proposedNameForStores.Add(name);
+					}
+					else if (store is MatchInstruction match && match.SlotInfo == MatchInstruction.SubPatternsSlot)
+					{
+						var name = GetNameFromInstruction(match.TestedOperand);
+						if (!currentLowerCaseTypeOrMemberNames.Contains(name))
+							proposedNameForStores.Add(name);
+					}
+					else if (store is PinnedRegion pinnedRegion)
+					{
+						var name = GetNameFromInstruction(pinnedRegion.Init);
+						if (!currentLowerCaseTypeOrMemberNames.Contains(name))
+							proposedNameForStores.Add(name);
+					}
+				}
 				if (proposedNameForStores.Count == 1)
 				{
-					proposedName = proposedNameForStores[0];
+					proposedName = proposedNameForStores.Single();
 				}
 			}
 			if (string.IsNullOrEmpty(proposedName))
@@ -464,32 +459,21 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				proposedName = GetNameByType(variable.Type);
 			}
 
-			// remove any numbers from the proposed name
-			proposedName = SplitName(proposedName, out int number);
-
-			if (!reservedVariableNames.ContainsKey(proposedName))
-			{
-				reservedVariableNames.Add(proposedName, 0);
-			}
-			int count = ++reservedVariableNames[proposedName];
-			Debug.Assert(!string.IsNullOrWhiteSpace(proposedName));
-			if (count > 1)
-			{
-				return proposedName + count.ToString();
-			}
-			else
-			{
-				return proposedName;
-			}
+			// for generated names remove number-suffixes
+			return SplitName(proposedName, out _);
 		}
 
 		static string GetNameFromInstruction(ILInstruction inst)
 		{
 			switch (inst)
 			{
+				case GetPinnableReference getPinnableReference:
+					return GetNameFromInstruction(getPinnableReference.Argument);
 				case LdObj ldobj:
 					return GetNameFromInstruction(ldobj.Target);
 				case LdFlda ldflda:
+					if (ldflda.Field.IsCompilerGeneratedOrIsInCompilerGeneratedClass())
+						return GetNameFromInstruction(ldflda.Target);
 					return CleanUpVariableName(ldflda.Field.Name);
 				case LdsFlda ldsflda:
 					return CleanUpVariableName(ldsflda.Field.Name);
@@ -568,6 +552,8 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			if (m.Name == "ToString")
 				return true;
 			if (m.Name == "Concat" && m.DeclaringType.IsKnownType(KnownTypeCode.String))
+				return true;
+			if (m.Name == "GetPinnableReference")
 				return true;
 			return false;
 		}

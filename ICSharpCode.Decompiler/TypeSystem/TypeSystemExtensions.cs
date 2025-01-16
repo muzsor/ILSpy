@@ -239,7 +239,7 @@ namespace ICSharpCode.Decompiler.TypeSystem
 
 			bool IsUnmanagedTypeInternal(IType type)
 			{
-				if (type.Kind is TypeKind.Enum or TypeKind.Pointer or TypeKind.FunctionPointer)
+				if (type.Kind is TypeKind.Enum or TypeKind.Pointer or TypeKind.FunctionPointer or TypeKind.NInt or TypeKind.NUInt)
 				{
 					return true;
 				}
@@ -699,14 +699,14 @@ namespace ICSharpCode.Decompiler.TypeSystem
 		public static bool IsDirectImportOf(this ITypeDefinition type, IModule module)
 		{
 			var moduleReference = type.ParentModule;
-			foreach (var asmRef in module.PEFile.AssemblyReferences)
+			foreach (var asmRef in module.MetadataFile.AssemblyReferences)
 			{
 				if (asmRef.FullName == moduleReference.FullAssemblyName)
 					return true;
 				if (asmRef.Name == "netstandard" && asmRef.GetPublicKeyToken() != null)
 				{
 					var referencedModule = module.Compilation.FindModuleByReference(asmRef);
-					if (referencedModule != null && !referencedModule.PEFile.GetTypeForwarder(type.FullTypeName).IsNil)
+					if (referencedModule != null && !referencedModule.MetadataFile.GetTypeForwarder(type.FullTypeName).IsNil)
 						return true;
 				}
 			}

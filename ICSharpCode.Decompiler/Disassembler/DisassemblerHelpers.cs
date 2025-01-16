@@ -17,7 +17,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Reflection.Metadata;
 using System.Text;
@@ -25,8 +24,6 @@ using System.Text;
 using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.Util;
-
-using SRM = System.Reflection.Metadata;
 
 namespace ICSharpCode.Decompiler.Disassembler
 {
@@ -72,7 +69,7 @@ namespace ICSharpCode.Decompiler.Disassembler
 				writer.WriteLocalReference(OffsetToString(offset.Value), offset);
 		}
 
-		public static void WriteTo(this SRM.ExceptionRegion exceptionHandler, Metadata.PEFile module, MetadataGenericContext context, ITextOutput writer)
+		public static void WriteTo(this ExceptionRegion exceptionHandler, MetadataFile module, MetadataGenericContext context, ITextOutput writer)
 		{
 			writer.Write(".try ");
 			WriteOffsetReference(writer, exceptionHandler.TryOffset);
@@ -141,32 +138,44 @@ namespace ICSharpCode.Decompiler.Disassembler
 			return $"'{EscapeString(identifier).Replace("'", "\\'")}'";
 		}
 
-		public static void WriteParameterReference(ITextOutput writer, MetadataReader metadata, MethodDefinitionHandle handle, int sequence)
+		public static void WriteParameterReference(ITextOutput writer, MetadataReader metadata, MethodDefinitionHandle handle, int index)
 		{
-			var methodDefinition = metadata.GetMethodDefinition(handle);
-			var signature = methodDefinition.DecodeSignature(new FullTypeNameSignatureDecoder(metadata), default);
-			var parameters = methodDefinition.GetParameters().Select(p => metadata.GetParameter(p)).ToArray();
-			var signatureHeader = signature.Header;
-			int index = sequence;
-			if (signatureHeader.IsInstance && signature.ParameterTypes.Length == parameters.Length)
+			string name = GetParameterName(index);
+			if (name == null)
 			{
-				index--;
-			}
-			if (index < 0 || index >= parameters.Length)
-			{
-				writer.WriteLocalReference(sequence.ToString(), "param_" + index);
+				writer.WriteLocalReference(index.ToString(), "param_" + index);
 			}
 			else
 			{
-				var param = parameters[index];
-				if (param.Name.IsNil)
+				writer.WriteLocalReference(name, "param_" + index);
+			}
+
+			string GetParameterName(int parameterNumber)
+			{
+				var methodDefinition = metadata.GetMethodDefinition(handle);
+				if ((methodDefinition.Attributes & System.Reflection.MethodAttributes.Static) != 0)
 				{
-					writer.WriteLocalReference(sequence.ToString(), "param_" + index);
+					parameterNumber++;
 				}
-				else
+				foreach (var p in methodDefinition.GetParameters())
 				{
-					writer.WriteLocalReference(Escape(metadata.GetString(param.Name)), "param_" + index);
+					var param = metadata.GetParameter(p);
+					if (param.SequenceNumber < parameterNumber)
+					{
+						continue;
+					}
+					else if (param.SequenceNumber == parameterNumber)
+					{
+						if (param.Name.IsNil)
+							return null;
+						return Escape(metadata.GetString(param.Name));
+					}
+					else
+					{
+						break;
+					}
 				}
+				return null;
 			}
 		}
 

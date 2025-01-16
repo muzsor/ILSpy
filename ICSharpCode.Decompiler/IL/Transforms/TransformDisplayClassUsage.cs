@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2019 Siegfried Pammer
+// Copyright (c) 2019 Siegfried Pammer
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this
 // software and associated documentation files (the "Software"), to deal in the Software
@@ -289,7 +289,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 						return null;
 					if (!(v.StoreInstructions.SingleOrDefault() is StLoc stloc))
 						return null;
-					if (stloc.Value is NewObj newObj && ValidateConstructor(newObj.Method))
+					if (stloc.Value is NewObj newObj && ValidateConstructor(context, newObj.Method))
 					{
 						result = new DisplayClass(v, definition) {
 							CaptureScope = v.CaptureScope,
@@ -393,7 +393,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			var definition = newObj.Method.DeclaringType.GetDefinition();
 			if (!ValidateDisplayClassDefinition(definition))
 				return null;
-			if (!ValidateConstructor(newObj.Method))
+			if (!ValidateConstructor(context, newObj.Method))
 				return null;
 			if (!initializerBlock.Parent.MatchStLoc(out var referenceVariable))
 				return null;
@@ -413,11 +413,11 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 		{
 			if (definition == null)
 				return false;
-			if (definition.ParentModule.PEFile != context.PEFile)
+			if (definition.ParentModule.MetadataFile != context.PEFile)
 				return false;
 			// We do not want to accidentially transform state-machines and thus destroy them.
 			var token = (TypeDefinitionHandle)definition.MetadataToken;
-			var metadata = definition.ParentModule.PEFile.Metadata;
+			var metadata = definition.ParentModule.MetadataFile.Metadata;
 			if (YieldReturnDecompiler.IsCompilerGeneratorEnumerator(token, metadata))
 				return false;
 			if (AsyncAwaitDecompiler.IsCompilerGeneratedStateMachine(token, metadata))
@@ -432,7 +432,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			return true;
 		}
 
-		private bool ValidateConstructor(IMethod method)
+		internal static bool ValidateConstructor(ILTransformContext context, IMethod method)
 		{
 			try
 			{
@@ -440,13 +440,13 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					return false;
 				var handle = (MethodDefinitionHandle)method.MetadataToken;
 				var module = (MetadataModule)method.ParentModule;
-				var file = module.PEFile;
+				var file = module.MetadataFile;
 				if (handle.IsNil || file != context.PEFile)
 					return false;
 				var def = file.Metadata.GetMethodDefinition(handle);
 				if (def.RelativeVirtualAddress == 0)
 					return false;
-				var body = file.Reader.GetMethodBody(def.RelativeVirtualAddress);
+				var body = file.GetMethodBody(def.RelativeVirtualAddress);
 				// some compilers produce ctors with unused local variables
 				// see https://github.com/icsharpcode/ILSpy/issues/2174
 				//if (!body.LocalSignature.IsNil)
@@ -491,7 +491,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			}
 		}
 
-		ILOpCode DecodeOpCodeSkipNop(ref BlobReader reader)
+		static ILOpCode DecodeOpCodeSkipNop(ref BlobReader reader)
 		{
 			ILOpCode code;
 			do
@@ -549,7 +549,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 						// "dc.field = v; v = 42; use(dc.field)" cannot turn to "v = 42; use(v);"
 						return null;
 					}
-					if (!(expectedType == null || v.Kind == VariableKind.StackSlot || v.Type.Equals(expectedType)))
+					if (!(expectedType == null || v.Kind == VariableKind.StackSlot || NormalizeTypeVisitor.IgnoreNullability.EquivalentTypes(v.Type, expectedType)))
 						return null;
 					return v;
 				case LdObj ldfld:

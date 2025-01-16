@@ -85,6 +85,7 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 							break;
 						case ClassType.RecordStruct:
 							writer.WriteKeyword(Roles.RecordKeyword, "record");
+							writer.Space();
 							writer.WriteKeyword(Roles.StructKeyword, "struct");
 							break;
 						default:
@@ -135,7 +136,9 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 				{
 					if ((ConversionFlags & ConversionFlags.ShowParameterModifiers) == 0)
 					{
-						param.ParameterModifier = ParameterModifier.None;
+						param.ParameterModifier = ReferenceKind.None;
+						param.IsScopedRef = false;
+						param.IsParams = false;
 					}
 					if ((ConversionFlags & ConversionFlags.ShowParameterDefaultValues) == 0)
 					{
@@ -179,8 +182,7 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 
 			if ((ConversionFlags & ConversionFlags.ShowBody) == ConversionFlags.ShowBody && !(node is TypeDeclaration))
 			{
-				IProperty property = symbol as IProperty;
-				if (property != null)
+				if (symbol is IProperty property)
 				{
 					writer.Space();
 					writer.WriteToken(Roles.LBrace, "{");
@@ -193,7 +195,10 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 					}
 					if (property.CanSet)
 					{
-						writer.WriteKeyword(PropertyDeclaration.SetKeywordRole, "set");
+						if ((ConversionFlags & ConversionFlags.SupportInitAccessors) != 0 && property.Setter.IsInitOnly)
+							writer.WriteKeyword(PropertyDeclaration.InitKeywordRole, "init");
+						else
+							writer.WriteKeyword(PropertyDeclaration.SetKeywordRole, "set");
 						writer.WriteToken(Roles.Semicolon, ";");
 						writer.Space();
 					}
@@ -237,6 +242,8 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 			astBuilder.SupportInitAccessors = (ConversionFlags & ConversionFlags.SupportInitAccessors) != 0;
 			astBuilder.SupportRecordClasses = (ConversionFlags & ConversionFlags.SupportRecordClasses) != 0;
 			astBuilder.SupportRecordStructs = (ConversionFlags & ConversionFlags.SupportRecordStructs) != 0;
+			astBuilder.SupportUnsignedRightShift = (ConversionFlags & ConversionFlags.SupportUnsignedRightShift) != 0;
+			astBuilder.SupportOperatorChecked = (ConversionFlags & ConversionFlags.SupportOperatorChecked) != 0;
 			return astBuilder;
 		}
 
@@ -295,20 +302,35 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 							ConvertType(member.ReturnType, writer, formattingPolicy);
 							break;
 						case "op_Explicit":
+						case "op_CheckedExplicit":
 							writer.WriteKeyword(OperatorDeclaration.ExplicitRole, "explicit");
 							writer.Space();
 							writer.WriteKeyword(OperatorDeclaration.OperatorKeywordRole, "operator");
 							writer.Space();
+							if (member.Name == "op_CheckedExplicit")
+							{
+								writer.WriteToken(OperatorDeclaration.CheckedKeywordRole, "checked");
+								writer.Space();
+							}
 							ConvertType(member.ReturnType, writer, formattingPolicy);
 							break;
 						default:
 							writer.WriteKeyword(OperatorDeclaration.OperatorKeywordRole, "operator");
 							writer.Space();
 							var operatorType = OperatorDeclaration.GetOperatorType(member.Name);
-							if (operatorType.HasValue)
+							if (operatorType.HasValue && !((ConversionFlags & ConversionFlags.SupportOperatorChecked) == 0 && OperatorDeclaration.IsChecked(operatorType.Value)))
+							{
+								if (OperatorDeclaration.IsChecked(operatorType.Value))
+								{
+									writer.WriteToken(OperatorDeclaration.CheckedKeywordRole, "checked");
+									writer.Space();
+								}
 								writer.WriteToken(OperatorDeclaration.GetRole(operatorType.Value), OperatorDeclaration.GetToken(operatorType.Value));
+							}
 							else
+							{
 								writer.WriteIdentifier(node.NameToken);
+							}
 							break;
 					}
 					break;

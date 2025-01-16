@@ -42,6 +42,8 @@ using ICSharpCode.ILSpy.TextView;
 using ICSharpCode.ILSpy.TreeNodes;
 using ICSharpCode.ILSpy.ViewModels;
 
+using TomsToolbox.Wpf.Interactivity;
+
 namespace ICSharpCode.ILSpy.Metadata
 {
 	static class Helpers
@@ -69,6 +71,7 @@ namespace ICSharpCode.ILSpy.Metadata
 				ContextMenuProvider.Add(view);
 				DataGridFilter.SetIsAutoFilterEnabled(view, true);
 				DataGridFilter.SetContentFilterFactory(view, new RegexContentFilterFactory());
+				AdvancedScrollWheelBehavior.SetAttach(view, AdvancedScrollWheelMode.WithoutAnimation);
 			}
 			DataGridFilter.GetFilter(view).Clear();
 			view.RowDetailsTemplateSelector = null;
@@ -143,7 +146,7 @@ namespace ICSharpCode.ILSpy.Metadata
 
 				var descriptor = (PropertyDescriptor)e.PropertyDescriptor;
 
-				if (descriptor.Attributes.OfType<LinkToTableAttribute>().Any())
+				if (descriptor.Attributes.OfType<ColumnInfoAttribute>().Any(c => c.Kind == ColumnKind.Token || c.LinkToTable))
 				{
 					return new DataGridTemplateColumn() {
 						Header = e.PropertyName,
@@ -200,23 +203,32 @@ namespace ICSharpCode.ILSpy.Metadata
 				string key = descriptor.PropertyType.Name + "Filter";
 				column.SetTemplate((ControlTemplate)MetadataTableViews.Instance[key]);
 			}
-			var stringFormat = descriptor.Attributes.OfType<StringFormatAttribute>().FirstOrDefault();
-			if (stringFormat != null)
+			var columnInfo = descriptor.Attributes.OfType<ColumnInfoAttribute>().FirstOrDefault();
+			if (columnInfo != null)
 			{
-				binding.StringFormat = stringFormat.Format;
+				binding.StringFormat = columnInfo.Format;
 				if (!descriptor.PropertyType.IsEnum
-					&& stringFormat.Format.StartsWith("X", StringComparison.OrdinalIgnoreCase))
+					&& columnInfo.Format.StartsWith("X", StringComparison.OrdinalIgnoreCase))
 				{
 					column.SetTemplate((ControlTemplate)MetadataTableViews.Instance["HexFilter"]);
 				}
 			}
 		}
 
+		[Obsolete("Use safe GetValueLittleEndian(ReadOnlySpan<byte>) or appropriate BinaryPrimitives.Read* method")]
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public static unsafe int GetValue(byte* ptr, int size)
+			=> GetValueLittleEndian(new ReadOnlySpan<byte>(ptr, size));
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public static int GetValueLittleEndian(ReadOnlySpan<byte> ptr, int size)
+			=> GetValueLittleEndian(ptr.Slice(0, size));
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public static int GetValueLittleEndian(ReadOnlySpan<byte> ptr)
 		{
 			int result = 0;
-			for (int i = 0; i < size; i += 2)
+			for (int i = 0; i < ptr.Length; i += 2)
 			{
 				result |= ptr[i] << 8 * i;
 				result |= ptr[i + 1] << 8 * (i + 1);
@@ -297,18 +309,26 @@ namespace ICSharpCode.ILSpy.Metadata
 		}
 	}
 
-	class StringFormatAttribute : Attribute
+	enum ColumnKind
+	{
+		HeapOffset,
+		Token,
+		Other
+	}
+
+	[AttributeUsage(AttributeTargets.Property)]
+	class ColumnInfoAttribute : Attribute
 	{
 		public string Format { get; }
 
-		public StringFormatAttribute(string format)
+		public ColumnKind Kind { get; set; }
+
+		public bool LinkToTable { get; set; }
+
+		public ColumnInfoAttribute(string format)
 		{
 			this.Format = format;
 		}
-	}
-
-	class LinkToTableAttribute : Attribute
-	{
 	}
 
 	[Flags]

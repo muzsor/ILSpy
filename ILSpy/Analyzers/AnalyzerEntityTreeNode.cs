@@ -22,7 +22,8 @@ using System.Windows;
 using ICSharpCode.Decompiler.TypeSystem;
 using ICSharpCode.ILSpy.TreeNodes;
 using ICSharpCode.ILSpyX;
-using ICSharpCode.TreeView;
+using ICSharpCode.ILSpyX.TreeView.PlatformAbstractions;
+using ICSharpCode.ILSpyX.TreeView;
 
 namespace ICSharpCode.ILSpy.Analyzers
 {
@@ -33,22 +34,23 @@ namespace ICSharpCode.ILSpy.Analyzers
 	{
 		public abstract IEntity Member { get; }
 
-		public override void ActivateItem(System.Windows.RoutedEventArgs e)
+		public override void ActivateItem(IPlatformRoutedEventArgs e)
 		{
 			e.Handled = true;
-			if (this.Member.MetadataToken.IsNil)
+			if (this.Member == null || this.Member.MetadataToken.IsNil)
 			{
 				MessageBox.Show(Properties.Resources.CannotAnalyzeMissingRef, "ILSpy");
 				return;
 			}
-			MainWindow.Instance.JumpToReference(new EntityReference(this.Member.ParentModule.PEFile, this.Member.MetadataToken));
+
+			MessageBus.Send(this, new NavigateToReferenceEventArgs(new EntityReference(this.Member.ParentModule?.MetadataFile, this.Member.MetadataToken)));
 		}
 
 		public override bool HandleAssemblyListChanged(ICollection<LoadedAssembly> removedAssemblies, ICollection<LoadedAssembly> addedAssemblies)
 		{
 			foreach (LoadedAssembly asm in removedAssemblies)
 			{
-				if (this.Member.ParentModule.PEFile == asm.GetPEFileOrNull())
+				if (this.Member.ParentModule.MetadataFile == asm.GetMetadataFileOrNull())
 					return false; // remove this node
 			}
 			this.Children.RemoveAll(

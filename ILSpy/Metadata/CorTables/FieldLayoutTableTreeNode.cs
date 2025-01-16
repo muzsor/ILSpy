@@ -16,45 +16,39 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.Disassembler;
-using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 
 namespace ICSharpCode.ILSpy.Metadata
 {
 	internal class FieldLayoutTableTreeNode : MetadataTableTreeNode
 	{
-		public FieldLayoutTableTreeNode(PEFile module)
-			: base((HandleKind)0x10, module)
+		public FieldLayoutTableTreeNode(MetadataFile metadataFile)
+			: base(TableIndex.FieldLayout, metadataFile)
 		{
 		}
 
-		public override object Text => $"10 FieldLayout ({module.Metadata.GetTableRowCount(TableIndex.FieldLayout)})";
-
-		public override object Icon => Images.Literal;
-
-		public unsafe override bool View(ViewModels.TabPageModel tabPage)
+		public override bool View(ViewModels.TabPageModel tabPage)
 		{
 			tabPage.Title = Text.ToString();
 			tabPage.SupportsLanguageSwitching = false;
 
 			var view = Helpers.PrepareDataGrid(tabPage, this);
-			var metadata = module.Metadata;
+			var metadata = metadataFile.Metadata;
 
 			var list = new List<FieldLayoutEntry>();
 			FieldLayoutEntry scrollTargetEntry = default;
 
 			var length = metadata.GetTableRowCount(TableIndex.FieldLayout);
-			byte* ptr = metadata.MetadataPointer;
-			int metadataOffset = module.Reader.PEHeaders.MetadataStartOffset;
+			ReadOnlySpan<byte> ptr = metadata.AsReadOnlySpan();
 			for (int rid = 1; rid <= length; rid++)
 			{
-				FieldLayoutEntry entry = new FieldLayoutEntry(module, ptr, metadataOffset, rid);
+				FieldLayoutEntry entry = new FieldLayoutEntry(metadataFile, ptr, rid);
 				if (entry.RID == this.scrollTarget)
 				{
 					scrollTargetEntry = entry;
@@ -79,17 +73,16 @@ namespace ICSharpCode.ILSpy.Metadata
 			public readonly int Offset;
 			public readonly FieldDefinitionHandle Field;
 
-			public unsafe FieldLayout(byte* ptr, int fieldDefSize)
+			public FieldLayout(ReadOnlySpan<byte> ptr, int fieldDefSize)
 			{
-				Offset = Helpers.GetValue(ptr, 4);
-				Field = MetadataTokens.FieldDefinitionHandle(Helpers.GetValue(ptr + 4, fieldDefSize));
+				Offset = BinaryPrimitives.ReadInt32LittleEndian(ptr);
+				Field = MetadataTokens.FieldDefinitionHandle(Helpers.GetValueLittleEndian(ptr.Slice(4, fieldDefSize)));
 			}
 		}
 
-		unsafe struct FieldLayoutEntry
+		struct FieldLayoutEntry
 		{
-			readonly PEFile module;
-			readonly MetadataReader metadata;
+			readonly MetadataFile metadataFile;
 			readonly FieldLayout fieldLayout;
 
 			public int RID { get; }
@@ -98,43 +91,31 @@ namespace ICSharpCode.ILSpy.Metadata
 
 			public int Offset { get; }
 
-			[StringFormat("X8")]
-			[LinkToTable]
+			[ColumnInfo("X8", Kind = ColumnKind.Token)]
 			public int Field => MetadataTokens.GetToken(fieldLayout.Field);
 
 			public void OnFieldClick()
 			{
-				MainWindow.Instance.JumpToReference(new EntityReference(module, fieldLayout.Field, protocol: "metadata"));
+				MessageBus.Send(this, new NavigateToReferenceEventArgs(new EntityReference(metadataFile, fieldLayout.Field, protocol: "metadata")));
 			}
 
-			public string FieldTooltip {
-				get {
-					ITextOutput output = new PlainTextOutput();
-					var context = new Decompiler.Metadata.MetadataGenericContext(default(TypeDefinitionHandle), module);
-					((EntityHandle)fieldLayout.Field).WriteTo(module, output, context);
-					return output.ToString();
-				}
-			}
+			string fieldTooltip;
+			public string FieldTooltip => GenerateTooltip(ref fieldTooltip, metadataFile, fieldLayout.Field);
 
-			[StringFormat("X")]
+			[ColumnInfo("X8", Kind = ColumnKind.Other)]
 			public int FieldOffset => fieldLayout.Offset;
 
-			public FieldLayoutEntry(PEFile module, byte* ptr, int metadataOffset, int row)
+			public FieldLayoutEntry(MetadataFile metadataFile, ReadOnlySpan<byte> ptr, int row)
 			{
-				this.module = module;
-				this.metadata = module.Metadata;
+				this.metadataFile = metadataFile;
 				this.RID = row;
-				var rowOffset = metadata.GetTableMetadataOffset(TableIndex.FieldLayout)
-					+ metadata.GetTableRowSize(TableIndex.FieldLayout) * (row - 1);
-				this.Offset = metadataOffset + rowOffset;
-				int fieldDefSize = metadata.GetTableRowCount(TableIndex.Field) < ushort.MaxValue ? 2 : 4;
-				this.fieldLayout = new FieldLayout(ptr + rowOffset, fieldDefSize);
+				var rowOffset = metadataFile.Metadata.GetTableMetadataOffset(TableIndex.FieldLayout)
+					+ metadataFile.Metadata.GetTableRowSize(TableIndex.FieldLayout) * (row - 1);
+				this.Offset = metadataFile.MetadataOffset + rowOffset;
+				int fieldDefSize = metadataFile.Metadata.GetTableRowCount(TableIndex.Field) < ushort.MaxValue ? 2 : 4;
+				this.fieldLayout = new FieldLayout(ptr.Slice(rowOffset), fieldDefSize);
+				this.fieldTooltip = null;
 			}
-		}
-
-		public override void Decompile(Language language, ITextOutput output, DecompilationOptions options)
-		{
-			language.WriteCommentLine(output, "FieldLayouts");
 		}
 	}
 }

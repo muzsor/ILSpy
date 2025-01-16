@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2016 Daniel Grunwald
+// Copyright (c) 2016 Daniel Grunwald
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this
 // software and associated documentation files (the "Software"), to deal in the Software
@@ -19,6 +19,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
 
 using ICSharpCode.Decompiler.IL.Transforms;
 using ICSharpCode.Decompiler.TypeSystem;
@@ -612,18 +613,16 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 						innerBlock = (Block)innerBlock.Clone();
 						clonedBlocks[i] = innerBlock;
 					}
-					Branch br = innerBlock.Instructions.LastOrDefault() as Branch;
-					if (br != null && br.TargetBlock.IncomingEdgeCount == 1
-						&& br.TargetContainer == sourceContainer && reachedEdgesPerBlock[br.TargetBlock.ChildIndex] == 0)
+					if (innerBlock.MatchIfAtEndOfBlock(out _, out var trueInst, out var falseInst))
 					{
-						// branch that leaves body.
-						// The target block should have an instruction that resets the pin; delete that instruction:
-						StLoc unpin = br.TargetBlock.Instructions.First() as StLoc;
-						if (unpin != null && unpin.Variable == stLoc.Variable && IsNullOrZero(unpin.Value))
-						{
-							br.TargetBlock.Instructions.RemoveAt(0);
-						}
+						HandleBranchLeavingPinnedRegion(trueInst, reachedEdgesPerBlock, sourceContainer, stLoc.Variable);
+						HandleBranchLeavingPinnedRegion(falseInst, reachedEdgesPerBlock, sourceContainer, stLoc.Variable);
 					}
+					else
+					{
+						HandleBranchLeavingPinnedRegion(innerBlock.Instructions.LastOrDefault(), reachedEdgesPerBlock, sourceContainer, stLoc.Variable);
+					}
+
 					// move block into body
 					if (sourceContainer.Blocks[i] == entryBlock)
 					{
@@ -698,6 +697,21 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 			return true;
 		}
 
+		static void HandleBranchLeavingPinnedRegion(ILInstruction potentialBranch, int[] reachedEdgesPerBlock, BlockContainer sourceContainer, ILVariable pinnedRegionVar)
+		{
+			if (potentialBranch is Branch branch && branch.TargetBlock.IncomingEdgeCount == 1
+			 	&& branch.TargetContainer == sourceContainer && reachedEdgesPerBlock[branch.TargetBlock.ChildIndex] == 0)
+			{
+				// branch that leaves body.
+				// The target block should have an instruction that resets the pin; delete that instruction:
+				StLoc unpin = branch.TargetBlock.Instructions.First() as StLoc;
+				if (unpin != null && unpin.Variable == pinnedRegionVar && IsNullOrZero(unpin.Value))
+				{
+					branch.TargetBlock.Instructions.RemoveAt(0);
+				}
+			}
+		}
+
 		static bool IsNullOrZero(ILInstruction inst)
 		{
 			while (inst is Conv conv)
@@ -749,6 +763,13 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 			{
 				// fixing a string
 				HandleStringToPointer(pinnedRegion);
+			}
+			else if (pinnedRegion.Init is Conv { Kind: ConversionKind.StopGCTracking, Argument: var convArg })
+			{
+				// If pinnedRegion.Variable was already a pointer type, the input IL has a StopGCTracking conversion.
+				// We can simply remove this conversion, as it is not needed.
+				context.Step("Remove StopGCTracking conversion", pinnedRegion);
+				pinnedRegion.Init = convArg;
 			}
 			// Detect nested pinned regions:
 			BlockContainer body = (BlockContainer)pinnedRegion.Body;
@@ -878,28 +899,44 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 				}
 				return;
 			}
-			if (body.EntryPoint.Instructions.Count != 3)
-			{
-				return;
-			}
-
 			if (nativeVar.Type.GetStackType() != StackType.I)
 				return;
-			if (!initInst.UnwrapConv(ConversionKind.StopGCTracking).MatchLdLoc(pinnedRegion.Variable))
+
+			Block targetBlock;
+			Block adjustOffsetToStringData = null;
+			if (body.EntryPoint.Instructions.Count == 2)
+			{
+				if (!initInst.MatchBinaryNumericInstruction(BinaryNumericOperator.Add, out ILInstruction left, out ILInstruction right))
+					return;
+				if (!left.UnwrapConv(ConversionKind.StopGCTracking).MatchLdLoc(pinnedRegion.Variable))
+					return;
+				if (!IsOffsetToStringDataCall(right))
+					return;
+				if (!body.EntryPoint.Instructions[1].MatchBranch(out targetBlock))
+					return;
+			}
+			else if (body.EntryPoint.Instructions.Count == 3)
+			{
+				if (!initInst.UnwrapConv(ConversionKind.StopGCTracking).MatchLdLoc(pinnedRegion.Variable))
+					return;
+				if (!IsBranchOnNull(body.EntryPoint.Instructions[1], nativeVar, out targetBlock))
+					return;
+				if (!body.EntryPoint.Instructions[2].MatchBranch(out adjustOffsetToStringData))
+					return;
+				if (!(adjustOffsetToStringData.Parent == body && adjustOffsetToStringData.IncomingEdgeCount == 1
+						&& IsOffsetToStringDataBlock(adjustOffsetToStringData, nativeVar, targetBlock)))
+					return;
+			}
+			else
 				return;
-			if (!IsBranchOnNull(body.EntryPoint.Instructions[1], nativeVar, out Block targetBlock))
-				return;
-			if (!body.EntryPoint.Instructions[2].MatchBranch(out Block adjustOffsetToStringData))
-				return;
-			if (!(adjustOffsetToStringData.Parent == body && adjustOffsetToStringData.IncomingEdgeCount == 1
-					&& IsOffsetToStringDataBlock(adjustOffsetToStringData, nativeVar, targetBlock)))
-				return;
+
 			context.Step("Handle pinned string (with adjustOffsetToStringData)", pinnedRegion);
 			if (targetBlock.Parent == body)
 			{
 				// remove old entry point
 				body.Blocks.RemoveAt(0);
-				body.Blocks.RemoveAt(adjustOffsetToStringData.ChildIndex);
+				if (adjustOffsetToStringData is not null)
+					body.Blocks.RemoveAt(adjustOffsetToStringData.ChildIndex);
 				// make targetBlock the new entry point
 				body.Blocks.RemoveAt(targetBlock.ChildIndex);
 				body.Blocks.Insert(0, targetBlock);

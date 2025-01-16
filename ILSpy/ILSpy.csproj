@@ -1,9 +1,8 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net6.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
@@ -19,8 +18,13 @@
     <SignAssembly>True</SignAssembly>
     <AssemblyOriginatorKeyFile>..\ICSharpCode.Decompiler\ICSharpCode.Decompiler.snk</AssemblyOriginatorKeyFile>
     <ServerGarbageCollection>true</ServerGarbageCollection>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
+
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Media.EnableHardwareAccelerationInRdp" Value="true" />
+  </ItemGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
     <DebugType>full</DebugType>
@@ -37,44 +41,32 @@
     <CodeAnalysisRuleSet>..\ICSharpCode.Decompiler\ICSharpCode.Decompiler.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
 
-  <Import Project="..\packages.props" />
-
   <ItemGroup>
-    <PackageReference Include="AvalonEdit" Version="$(AvalonEditVersion)" />
-    <PackageReference Include="System.IO.Compression" Version="4.3.0" />
-    <PackageReference Include="System.Reflection.Metadata" Version="$(SystemReflectionMetadataVersion)" />
-    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="$(SystemCompilerServicesUnsafeVersion)" />
-    <PackageReference Include="Dirkster.AvalonDock.Themes.VS2013" Version="4.71.2" />
-    <PackageReference Include="Microsoft.VisualStudio.Composition" Version="17.4.16" />
-    <PackageReference Include="System.Composition" Version="$(SystemCompositionVersion)" />
-    <PackageReference Include="Mono.Cecil" Version="$(MonoCecilVersion)" />
-    <PackageReference Include="DataGridExtensions" Version="2.5.14" />
-    <PackageReference Include="Microsoft.Xaml.Behaviors.Wpf" Version="1.1.39" />
-    <PackageReference Include="TomsToolbox.Wpf.Styles" Version="$(WpfStylesToolboxVersion)" />
-    <PackageReference Include="System.Runtime.Loader" Version="4.3.0" />
-    <PackageReference Include="K4os.Compression.LZ4" Version="1.2.16" />
-    <PackageReference Include="System.Buffers" Version="4.5.1" />
+    <PackageReference Include="AvalonEdit" />
+    <PackageReference Include="Dirkster.AvalonDock.Themes.VS2013" />
+    <PackageReference Include="McMaster.Extensions.CommandLineUtils" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="DataGridExtensions" />
+    <PackageReference Include="Microsoft.Xaml.Behaviors.Wpf" />
+    <PackageReference Include="NaturalSort.Extension" />
+    <PackageReference Include="TomsToolbox.Composition.MicrosoftExtensions" />
+    <PackageReference Include="TomsToolbox.Wpf.Composition.AttributedModel" />
+    <PackageReference Include="TomsToolbox.Wpf.Styles" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="..\doc\ILSpyAboutPage.txt" />
     <EmbeddedResource Include="..\doc\ILSpyAboutPage_zh_Hans.txt" />
     <EmbeddedResource Include="..\doc\third-party-notices.txt" />
-    <EmbeddedResource Include="..\doc\license.txt">
+    <EmbeddedResource Include="..\LICENSE">
       <Link>license.txt</Link>
     </EmbeddedResource>
     <Resource Include="Images\NuGet.png" />
-    <Resource Include="Images\DarkMode.png" />
     <Resource Include="Images\ILSpy.ico" />
     <EmbeddedResource Include="TextView\CSharp-Mode.xshd" />
     <EmbeddedResource Include="TextView\ILAsm-Mode.xshd" />
     <EmbeddedResource Include="TextView\Asm-Mode.xshd" />
     <EmbeddedResource Include="TextView\XML-Mode.xshd" />
-    <EmbeddedResource Include="TextView\CSharp-Mode-Dark.xshd" />
-    <EmbeddedResource Include="TextView\ILAsm-Mode-Dark.xshd" />
-    <EmbeddedResource Include="TextView\Asm-Mode-Dark.xshd" />
-    <EmbeddedResource Include="TextView\XML-Mode-Dark.xshd" />
-    <None Remove="Properties\launchSettings.json" />
   </ItemGroup>
 
   <ItemGroup>
@@ -95,11 +87,17 @@
   <ItemGroup>
     <ProjectReference Include="..\ICSharpCode.ILSpyX\ICSharpCode.ILSpyX.csproj" />
     <ProjectReference Include="..\ICSharpCode.Decompiler\ICSharpCode.Decompiler.csproj" />
-    <ProjectReference Include="..\SharpTreeView\ICSharpCode.TreeView.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-    <PackageReference Include="Microsoft.DiaSymReader.Converter.Xml" Version="$(DSRConverterXmlVersion)" />
+    <PackageReference Include="Microsoft.DiaSymReader.Converter.Xml" />
+    <PackageReference Include="Microsoft.DiaSymReader" />
+    <PackageReference Include="Microsoft.DiaSymReader.Native" />
+
+    <!-- 4.3.0 of all those have security vulnerabilities, and although only a debug build, we'll override the versions for good measure -->
+    <PackageReference Include="System.Net.Http" />
+    <PackageReference Include="System.Private.Uri" />
+    <PackageReference Include="System.Text.RegularExpressions" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -16,45 +16,38 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+using System;
 using System.Collections.Generic;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.Disassembler;
-using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 
 namespace ICSharpCode.ILSpy.Metadata
 {
 	class PropertyMapTableTreeNode : MetadataTableTreeNode
 	{
-		public PropertyMapTableTreeNode(PEFile module)
-			: base((HandleKind)0x15, module)
+		public PropertyMapTableTreeNode(MetadataFile metadataFile)
+			: base(TableIndex.PropertyMap, metadataFile)
 		{
 		}
 
-		public override object Text => $"15 PropertyMap ({module.Metadata.GetTableRowCount(TableIndex.PropertyMap)})";
-
-		public override object Icon => Images.Literal;
-
-		public unsafe override bool View(ViewModels.TabPageModel tabPage)
+		public override bool View(ViewModels.TabPageModel tabPage)
 		{
 			tabPage.Title = Text.ToString();
 			tabPage.SupportsLanguageSwitching = false;
 
 			var view = Helpers.PrepareDataGrid(tabPage, this);
-			var metadata = module.Metadata;
+			var metadata = metadataFile.Metadata;
 
 			var list = new List<PropertyMapEntry>();
 			PropertyMapEntry scrollTargetEntry = default;
 
 			var length = metadata.GetTableRowCount(TableIndex.PropertyMap);
-			byte* ptr = metadata.MetadataPointer;
-			int metadataOffset = module.Reader.PEHeaders.MetadataStartOffset;
+			ReadOnlySpan<byte> ptr = metadata.AsReadOnlySpan();
 			for (int rid = 1; rid <= length; rid++)
 			{
-				PropertyMapEntry entry = new PropertyMapEntry(module, ptr, metadataOffset, rid);
+				PropertyMapEntry entry = new PropertyMapEntry(metadataFile, ptr, rid);
 				if (entry.RID == this.scrollTarget)
 				{
 					scrollTargetEntry = entry;
@@ -79,17 +72,16 @@ namespace ICSharpCode.ILSpy.Metadata
 			public readonly TypeDefinitionHandle Parent;
 			public readonly PropertyDefinitionHandle PropertyList;
 
-			public unsafe PropertyMap(byte* ptr, int typeDefSize, int propertyDefSize)
+			public PropertyMap(ReadOnlySpan<byte> ptr, int typeDefSize, int propertyDefSize)
 			{
-				Parent = MetadataTokens.TypeDefinitionHandle(Helpers.GetValue(ptr, typeDefSize));
-				PropertyList = MetadataTokens.PropertyDefinitionHandle(Helpers.GetValue(ptr + typeDefSize, propertyDefSize));
+				Parent = MetadataTokens.TypeDefinitionHandle(Helpers.GetValueLittleEndian(ptr, typeDefSize));
+				PropertyList = MetadataTokens.PropertyDefinitionHandle(Helpers.GetValueLittleEndian(ptr.Slice(typeDefSize, propertyDefSize)));
 			}
 		}
 
-		unsafe struct PropertyMapEntry
+		struct PropertyMapEntry
 		{
-			readonly PEFile module;
-			readonly MetadataReader metadata;
+			readonly MetadataFile metadataFile;
 			readonly PropertyMap propertyMap;
 
 			public int RID { get; }
@@ -98,59 +90,41 @@ namespace ICSharpCode.ILSpy.Metadata
 
 			public int Offset { get; }
 
-			[StringFormat("X8")]
-			[LinkToTable]
+			[ColumnInfo("X8", Kind = ColumnKind.Token)]
 			public int Parent => MetadataTokens.GetToken(propertyMap.Parent);
 
 			public void OnParentClick()
 			{
-				MainWindow.Instance.JumpToReference(new EntityReference(module, propertyMap.Parent, protocol: "metadata"));
+				MessageBus.Send(this, new NavigateToReferenceEventArgs(new EntityReference(metadataFile, propertyMap.Parent, protocol: "metadata")));
 			}
 
-			public string ParentTooltip {
-				get {
-					ITextOutput output = new PlainTextOutput();
-					var context = new MetadataGenericContext(default(TypeDefinitionHandle), module);
-					((EntityHandle)propertyMap.Parent).WriteTo(module, output, context);
-					return output.ToString();
-				}
-			}
+			string parentTooltip;
+			public string ParentTooltip => GenerateTooltip(ref parentTooltip, metadataFile, propertyMap.Parent);
 
-			[StringFormat("X8")]
-			[LinkToTable]
+			[ColumnInfo("X8", Kind = ColumnKind.Token)]
 			public int PropertyList => MetadataTokens.GetToken(propertyMap.PropertyList);
 
 			public void OnPropertyListClick()
 			{
-				MainWindow.Instance.JumpToReference(new EntityReference(module, propertyMap.PropertyList, protocol: "metadata"));
+				MessageBus.Send(this, new NavigateToReferenceEventArgs(new EntityReference(metadataFile, propertyMap.PropertyList, protocol: "metadata")));
 			}
 
-			public string PropertyListTooltip {
-				get {
-					ITextOutput output = new PlainTextOutput();
-					var context = new MetadataGenericContext(default(TypeDefinitionHandle), module);
-					((EntityHandle)propertyMap.PropertyList).WriteTo(module, output, context);
-					return output.ToString();
-				}
-			}
+			string propertyListTooltip;
+			public string PropertyListTooltip => GenerateTooltip(ref propertyListTooltip, metadataFile, propertyMap.PropertyList);
 
-			public PropertyMapEntry(PEFile module, byte* ptr, int metadataOffset, int row)
+			public PropertyMapEntry(MetadataFile metadataFile, ReadOnlySpan<byte> ptr, int row)
 			{
-				this.module = module;
-				this.metadata = module.Metadata;
+				this.metadataFile = metadataFile;
 				this.RID = row;
-				var rowOffset = metadata.GetTableMetadataOffset(TableIndex.PropertyMap)
-					+ metadata.GetTableRowSize(TableIndex.PropertyMap) * (row - 1);
-				this.Offset = metadataOffset + rowOffset;
-				int typeDefSize = metadata.GetTableRowCount(TableIndex.TypeDef) < ushort.MaxValue ? 2 : 4;
-				int propertyDefSize = metadata.GetTableRowCount(TableIndex.Property) < ushort.MaxValue ? 2 : 4;
-				this.propertyMap = new PropertyMap(ptr + rowOffset, typeDefSize, propertyDefSize);
+				var rowOffset = metadataFile.Metadata.GetTableMetadataOffset(TableIndex.PropertyMap)
+					+ metadataFile.Metadata.GetTableRowSize(TableIndex.PropertyMap) * (row - 1);
+				this.Offset = metadataFile.MetadataOffset + rowOffset;
+				int typeDefSize = metadataFile.Metadata.GetTableRowCount(TableIndex.TypeDef) < ushort.MaxValue ? 2 : 4;
+				int propertyDefSize = metadataFile.Metadata.GetTableRowCount(TableIndex.Property) < ushort.MaxValue ? 2 : 4;
+				this.propertyMap = new PropertyMap(ptr.Slice(rowOffset), typeDefSize, propertyDefSize);
+				this.propertyListTooltip = null;
+				this.parentTooltip = null;
 			}
-		}
-
-		public override void Decompile(Language language, ITextOutput output, DecompilationOptions options)
-		{
-			language.WriteCommentLine(output, "PropertyMap");
 		}
 	}
 }

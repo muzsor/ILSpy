@@ -258,18 +258,24 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 				var metadata = module.metadata;
 				var methodsCollection = metadata.GetTypeDefinition(handle).GetMethods();
 				var methodsList = new List<IMethod>(methodsCollection.Count);
-				var methodSemantics = module.PEFile.MethodSemanticsLookup;
+				var methodSemantics = module.MetadataFile.MethodSemanticsLookup;
+				bool hasDefaultCtor = false;
 				foreach (MethodDefinitionHandle h in methodsCollection)
 				{
 					var md = metadata.GetMethodDefinition(h);
 					if (methodSemantics.GetSemantics(h).Item2 == 0 && module.IsVisible(md.Attributes))
 					{
-						methodsList.Add(module.GetDefinition(h));
+						IMethod method = module.GetDefinition(h);
+						if (method.SymbolKind == SymbolKind.Constructor && !method.IsStatic && method.Parameters.Count == 0)
+						{
+							hasDefaultCtor = true;
+						}
+						methodsList.Add(method);
 					}
 				}
-				if (this.Kind == TypeKind.Struct || this.Kind == TypeKind.Enum)
+				if (!hasDefaultCtor && (this.Kind == TypeKind.Struct || this.Kind == TypeKind.Enum))
 				{
-					methodsList.Add(FakeMethod.CreateDummyConstructor(Compilation, this, IsAbstract ? Accessibility.Protected : Accessibility.Public));
+					methodsList.Add(FakeMethod.CreateDummyConstructor(Compilation, this, Accessibility.Public));
 				}
 				if ((module.TypeSystemOptions & TypeSystemOptions.Uncached) != 0)
 					return methodsList;
@@ -302,7 +308,7 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 
 		public IType ChangeNullability(Nullability nullability)
 		{
-			if (nullability == Nullability.Oblivious)
+			if (nullability == Nullability.Oblivious || IsReferenceType == false)
 				return this;
 			else
 				return new NullabilityAnnotatedType(this, nullability);
@@ -547,14 +553,14 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 		{
 			if (obj is MetadataTypeDefinition td)
 			{
-				return handle == td.handle && module.PEFile == td.module.PEFile;
+				return handle == td.handle && module.MetadataFile == td.module.MetadataFile;
 			}
 			return false;
 		}
 
 		public override int GetHashCode()
 		{
-			return 0x2e0520f2 ^ module.PEFile.GetHashCode() ^ handle.GetHashCode();
+			return 0x2e0520f2 ^ module.MetadataFile.GetHashCode() ^ handle.GetHashCode();
 		}
 
 		bool IEquatable<IType>.Equals(IType other)

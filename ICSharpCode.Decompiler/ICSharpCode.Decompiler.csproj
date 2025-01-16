@@ -20,6 +20,7 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <Copyright>Copyright 2011-$([System.DateTime]::Now.Year) AlphaSierraPapa</Copyright>
     <PackageTags>C# Decompiler ILSpy</PackageTags>
+    <GenerateSBOM>true</GenerateSBOM>
 
     <NeutralLanguage>en-US</NeutralLanguage>
     <GenerateAssemblyVersionAttribute>False</GenerateAssemblyVersionAttribute>
@@ -27,14 +28,13 @@
     <GenerateAssemblyInformationalVersionAttribute>False</GenerateAssemblyInformationalVersionAttribute>
 
     <EnableDefaultItems>false</EnableDefaultItems>
-    <LangVersion>10</LangVersion>
+    <LangVersion>11</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <SignAssembly>True</SignAssembly>
     <AssemblyOriginatorKeyFile>ICSharpCode.Decompiler.snk</AssemblyOriginatorKeyFile>
     <NoWarn>1701;1702;1591;1573</NoWarn>
     <WarningsAsErrors>nullable</WarningsAsErrors>
 
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <DebugType>embedded</DebugType>
     <DebugSymbols>true</DebugSymbols>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
@@ -47,6 +47,12 @@
     <None Include="PackageReadme.md" Pack="true" PackagePath="\" />
     <None Include="DecompilerNuGetPackageIcon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
+  
+  <!-- https://devblogs.microsoft.com/nuget/enable-repeatable-package-restores-using-a-lock-file/ -->
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+	<RestoreLockedMode Condition="'$(GITHUB_ACTIONS)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
     <CheckForOverflowUnderflow>True</CheckForOverflowUnderflow>
@@ -69,12 +75,18 @@
     </GetPackageVersionDependsOn>
   </PropertyGroup>
 
-  <Import Project="..\packages.props" />
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Sbom.Targets" Version="3.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="System.Collections.Immutable" Version="6.0.0" />
     <PackageReference Include="System.Reflection.Metadata" Version="6.0.0" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
@@ -84,16 +96,19 @@
     <PackageReference Include="TunnelVisionLabs.ReferenceAssemblyAnnotator" Version="1.0.0-alpha.160" PrivateAssets="all" />
 
     <!-- Specifies the version of Microsoft.NETCore.App.Ref to obtain nullability information from. -->
-    <PackageDownload Include="Microsoft.NETCore.App.Ref" Version="[6.0.0]" />
+    <PackageDownload Include="Microsoft.NETCore.App.Ref" Version="[8.0.0]" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="CSharp\Annotations.cs" />
     <Compile Include="CSharp\CallBuilder.cs" />
     <Compile Include="CSharp\CSharpLanguageVersion.cs" />
+    <Compile Include="CSharp\Syntax\Expressions\RecursivePatternExpression.cs" />
     <Compile Include="DecompilationProgress.cs" />
     <Compile Include="Disassembler\IEntityProcessor.cs" />
     <Compile Include="Disassembler\SortByNameProcessor.cs" />
+    <Compile Include="Metadata\MetadataFile.cs" />
+    <Compile Include="Metadata\ModuleReferenceMetadata.cs" />
     <Compile Include="NRTAttributes.cs" />
     <Compile Include="PartialTypeInfo.cs" />
     <Compile Include="CSharp\ProjectDecompiler\IProjectFileWriter.cs" />
@@ -129,7 +144,6 @@
     <Compile Include="IL\Transforms\InterpolatedStringTransform.cs" />
     <Compile Include="IL\Transforms\IntroduceNativeIntTypeOnLocals.cs" />
     <Compile Include="IL\Transforms\LdLocaDupInitObjTransform.cs" />
-    <Compile Include="IL\Transforms\ParameterNullCheckTransform.cs" />
     <Compile Include="IL\Transforms\PatternMatchingTransform.cs" />
     <Compile Include="IL\Transforms\RemoveInfeasiblePathTransform.cs" />
     <Compile Include="Instrumentation\DecompilerEventSource.cs" />
@@ -139,6 +153,9 @@
     <Compile Include="Metadata\ReferenceLoadInfo.cs" />
     <Compile Include="Properties\DecompilerVersionInfo.cs" />
     <Compile Include="TypeSystem\ITypeDefinitionOrUnknown.cs" />
+    <Compile Include="Util\BitOperations.cs" />
+    <Compile Include="Util\Index.cs" />
+    <Compile Include="Metadata\WebCilFile.cs" />
     <None Include="Properties\DecompilerVersionInfo.template.cs" />
     <Compile Include="Semantics\OutVarResolveResult.cs" />
     <Compile Include="SingleFileBundle.cs" />
@@ -327,7 +344,6 @@
     <Compile Include="DecompilerException.cs" />
     <Compile Include="DecompilerSettings.cs" />
     <Compile Include="CSharp\Transforms\ContextTrackingVisitor.cs" />
-    <Compile Include="CSharp\Transforms\DecimalConstantTransform.cs" />
     <Compile Include="CSharp\Transforms\DeclareVariables.cs" />
     <Compile Include="CSharp\Transforms\EscapeInvalidIdentifiers.cs" />
     <Compile Include="CSharp\Transforms\FixNameCollisions.cs" />
@@ -356,6 +372,9 @@
     <Compile Include="IL\Transforms\TransformDisplayClassUsage.cs" />
     <Compile Include="IL\Transforms\UserDefinedLogicTransform.cs" />
     <Compile Include="Metadata\AssemblyReferences.cs" />
+    <Compile Include="Metadata\ExportedTypeMetadata.cs" />
+    <Compile Include="Metadata\MemberReferenceMetadata.cs" />
+    <Compile Include="Metadata\TypeReferenceMetadata.cs" />
     <Compile Include="Metadata\CodeMappingInfo.cs" />
     <Compile Include="Metadata\EnumUnderlyingTypeResolveException.cs" />
     <Compile Include="Metadata\MetadataTokenHelpers.cs" />
@@ -466,7 +485,6 @@
     <Compile Include="TypeSystem\TupleType.cs" />
     <Compile Include="TypeSystem\TypeProvider.cs" />
     <Compile Include="Util\FileUtility.cs" />
-    <Compile Include="Util\GraphVizGraph.cs" />
     <Compile Include="Util\KeyComparer.cs" />
     <Compile Include="Util\LongDict.cs" />
     <Compile Include="Util\ResourcesFile.cs" />
@@ -655,6 +673,7 @@
     <Compile Include="Util\CSharpPrimitiveCast.cs" />
     <Compile Include="Util\EmptyList.cs" />
     <Compile Include="Util\ExtensionMethods.cs" />
+    <Compile Include="Util\GraphTraversal.cs" />
     <Compile Include="Util\Interval.cs" />
     <Compile Include="Util\LazyInit.cs" />
     <Compile Include="Util\LongSet.cs" />
@@ -711,6 +730,7 @@
     <WriteLinesToFile Lines="$(CommitHash)" File="@(UpdateAssemblyInfoStamp)" Overwrite="true" Condition="'$(CommitHash)'!='$(LastCommitHash)'" />
     <ReadLinesFromFile ContinueOnError="true" File="..\VERSION">
       <Output TaskParameter="Lines" PropertyName="PackageVersion" />
+      <Output TaskParameter="Lines" PropertyName="SbomGenerationPackageVersion" />
     </ReadLinesFromFile>
   </Target>
 

@@ -88,23 +88,31 @@ namespace ICSharpCode.Decompiler.FlowAnalysis
 
 		public void TraversePreOrder(Func<ControlFlowNode, IEnumerable<ControlFlowNode>> children, Action<ControlFlowNode> visitAction)
 		{
-			if (Visited)
-				return;
-			Visited = true;
-			visitAction(this);
-			foreach (ControlFlowNode t in children(this))
-				t.TraversePreOrder(children, visitAction);
+			GraphTraversal.DepthFirstSearch(new[] { this }, Visit, children);
+
+			bool Visit(ControlFlowNode node)
+			{
+				if (node.Visited)
+					return false;
+				node.Visited = true;
+				visitAction(node);
+				return true;
+			}
 		}
 
 		public void TraversePostOrder(Func<ControlFlowNode, IEnumerable<ControlFlowNode>> children, Action<ControlFlowNode> visitAction)
 		{
-			if (Visited)
-				return;
-			Visited = true;
-			foreach (ControlFlowNode t in children(this))
-				t.TraversePostOrder(children, visitAction);
-			visitAction(this);
+			GraphTraversal.DepthFirstSearch(new[] { this }, Visit, children, postorderAction: visitAction);
+
+			bool Visit(ControlFlowNode node)
+			{
+				if (node.Visited)
+					return false;
+				node.Visited = true;
+				return true;
+			}
 		}
+
 
 		/// <summary>
 		/// Gets whether <c>this</c> dominates <paramref name="node"/>.
@@ -121,42 +129,5 @@ namespace ICSharpCode.Decompiler.FlowAnalysis
 			}
 			return false;
 		}
-
-#if DEBUG
-		internal static GraphVizGraph ExportGraph(IReadOnlyList<ControlFlowNode> nodes, Func<ControlFlowNode, string> labelFunc = null)
-		{
-			if (labelFunc == null)
-			{
-				labelFunc = node => {
-					var block = node.UserData as IL.Block;
-					return block != null ? block.Label : node.UserData?.ToString();
-				};
-			}
-			GraphVizGraph g = new GraphVizGraph();
-			GraphVizNode[] n = new GraphVizNode[nodes.Count];
-			for (int i = 0; i < n.Length; i++)
-			{
-				n[i] = new GraphVizNode(nodes[i].UserIndex);
-				n[i].shape = "box";
-				n[i].label = labelFunc(nodes[i]);
-				g.AddNode(n[i]);
-			}
-			foreach (var source in nodes)
-			{
-				foreach (var target in source.Successors)
-				{
-					g.AddEdge(new GraphVizEdge(source.UserIndex, target.UserIndex));
-				}
-				if (source.ImmediateDominator != null)
-				{
-					g.AddEdge(
-						new GraphVizEdge(source.ImmediateDominator.UserIndex, source.UserIndex) {
-							color = "green"
-						});
-				}
-			}
-			return g;
-		}
-#endif
 	}
 }

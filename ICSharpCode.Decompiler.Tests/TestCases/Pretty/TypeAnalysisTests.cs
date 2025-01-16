@@ -44,7 +44,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 				return (ushort)((uint64Field & 0xFFFF000000000000uL) >> 48);
 			}
 			set {
-				uint64Field = (uint64Field & 0xFFFFFFFFFFFFuL) | ((ulong)value << 48);
+				uint64Field = (uint64Field & 0xFFFFFFFFFFFFL) | ((ulong)value << 48);
 			}
 		}
 
@@ -106,7 +106,19 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public uint RShiftByteWithZeroExtension(byte num)
 		{
+			// zero extend -> cast to unsigned -> unsigned shift
 			return (uint)num >> 8;
+		}
+
+		public int RShiftByteWithZeroExtensionReturnAsSigned(byte num)
+		{
+#if CS110
+			// zero extend -> unsigned shift
+			return num >>> 8;
+#else
+			// zero extend -> cast to unsigned -> unsigned shift -> cast to signed
+			return (int)((uint)num >> 8);
+#endif
 		}
 
 		public int RShiftByteAsSByte(byte num)
@@ -121,9 +133,25 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public uint RShiftSByteWithZeroExtension(sbyte num)
 		{
-			return (uint)num >> 8;
+			return (uint)((byte)num >> 4);
 		}
 
+		public uint RShiftSByteWithSignExtension(sbyte num)
+		{
+			// sign extend -> cast to unsigned -> unsigned shift
+			return (uint)num >> 4;
+		}
+
+		public int RShiftSByteWithSignExtensionReturnAsSigned(sbyte num)
+		{
+#if CS110
+			// sign extend -> unsigned shift
+			return num >>> 4;
+#else
+			// sign extend -> cast to unsigned -> unsigned shift -> cast to signed
+			return (int)((uint)num >> 4);
+#endif
+		}
 		public int RShiftSByteAsByte(sbyte num)
 		{
 			return (byte)num >> 8;

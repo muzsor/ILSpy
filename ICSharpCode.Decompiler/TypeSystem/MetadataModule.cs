@@ -51,10 +51,10 @@ namespace ICSharpCode.Decompiler.TypeSystem
 		readonly MetadataEvent[] eventDefs;
 		readonly IModule[] referencedAssemblies;
 
-		internal MetadataModule(ICompilation compilation, Metadata.PEFile peFile, TypeSystemOptions options)
+		internal MetadataModule(ICompilation compilation, MetadataFile peFile, TypeSystemOptions options)
 		{
 			this.Compilation = compilation;
-			this.PEFile = peFile;
+			this.MetadataFile = peFile;
 			this.metadata = peFile.Metadata;
 			this.options = options;
 			this.TypeProvider = new TypeProvider(this);
@@ -112,8 +112,8 @@ namespace ICSharpCode.Decompiler.TypeSystem
 
 		public TypeSystemOptions TypeSystemOptions => options;
 
-		#region IAssembly interface
-		public PEFile PEFile { get; }
+		#region IModule interface
+		public MetadataFile MetadataFile { get; }
 
 		public bool IsMainModule => this == Compilation.MainModule;
 
@@ -129,10 +129,10 @@ namespace ICSharpCode.Decompiler.TypeSystem
 
 		public ITypeDefinition GetTypeDefinition(TopLevelTypeName topLevelTypeName)
 		{
-			var typeDefHandle = PEFile.GetTypeDefinition(topLevelTypeName);
+			var typeDefHandle = MetadataFile.GetTypeDefinition(topLevelTypeName);
 			if (typeDefHandle.IsNil)
 			{
-				var forwarderHandle = PEFile.GetTypeForwarder(topLevelTypeName);
+				var forwarderHandle = MetadataFile.GetTypeForwarder(topLevelTypeName);
 				if (!forwarderHandle.IsNil)
 				{
 					var forwarder = metadata.GetExportedType(forwarderHandle);
@@ -402,8 +402,9 @@ namespace ICSharpCode.Decompiler.TypeSystem
 		IType ResolveDeclaringType(EntityHandle declaringTypeReference, GenericContext context)
 		{
 			// resolve without substituting dynamic/tuple types
-			var ty = ResolveType(declaringTypeReference, context,
-				options & ~(TypeSystemOptions.Dynamic | TypeSystemOptions.Tuple | TypeSystemOptions.NullabilityAnnotations));
+			const TypeSystemOptions removedOptions = TypeSystemOptions.Dynamic | TypeSystemOptions.Tuple
+				| TypeSystemOptions.NullabilityAnnotations | TypeSystemOptions.NativeIntegers | TypeSystemOptions.NativeIntegersWithoutAttribute;
+			var ty = ResolveType(declaringTypeReference, context, options & ~removedOptions);
 			// but substitute tuple types in type arguments:
 			ty = ApplyAttributeTypeVisitor.ApplyAttributesToType(ty, Compilation, null, metadata, options, Nullability.Oblivious, typeChildrenOnly: true);
 			return ty;
@@ -754,7 +755,9 @@ namespace ICSharpCode.Decompiler.TypeSystem
 				case HandleKind.TypeDefinition:
 				case HandleKind.TypeSpecification:
 				case HandleKind.ExportedType:
-					return ResolveType(entityHandle, context).GetDefinition();
+					// Using ResolveDeclaringType() here because ResolveType() might return
+					// nint/nuint which are SpecialTypes without a definition.
+					return ResolveDeclaringType(entityHandle, context).GetDefinition();
 				case HandleKind.MemberReference:
 					var memberReferenceHandle = (MemberReferenceHandle)entityHandle;
 					switch (metadata.GetMemberReference(memberReferenceHandle).GetKind())

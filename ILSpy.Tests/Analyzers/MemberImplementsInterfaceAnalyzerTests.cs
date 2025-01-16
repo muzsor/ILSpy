@@ -25,10 +25,10 @@ using System.Reflection.PortableExecutable;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
 using ICSharpCode.Decompiler.TypeSystem.Implementation;
-using ICSharpCode.ILSpy.Analyzers;
-using ICSharpCode.ILSpy.Analyzers.Builtin;
+using ICSharpCode.ILSpyX.Analyzers;
+using ICSharpCode.ILSpyX.Analyzers.Builtin;
 
-using Moq;
+using NSubstitute;
 
 using NUnit.Framework;
 
@@ -69,7 +69,7 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 			var shouldShow = analyzer.Show(symbol: null);
 
 			// Assert
-			Assert.IsFalse(shouldShow, $"The analyzer will be unexpectedly shown for no symbol");
+			Assert.That(!shouldShow, $"The analyzer will be unexpectedly shown for no symbol");
 		}
 
 		[Test]
@@ -77,15 +77,15 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 		public void VerifyDoesNotShowForNonMembers(SymbolKind symbolKind)
 		{
 			// Arrange
-			var symbolMock = new Mock<ISymbol>();
-			symbolMock.Setup(s => s.SymbolKind).Returns(symbolKind);
+			var symbolMock = Substitute.For<ISymbol>();
+			symbolMock.SymbolKind.Returns(symbolKind);
 			var analyzer = new MemberImplementsInterfaceAnalyzer();
 
 			// Act
-			var shouldShow = analyzer.Show(symbolMock.Object);
+			var shouldShow = analyzer.Show(symbolMock);
 
 			// Assert
-			Assert.IsFalse(shouldShow, $"The analyzer will be unexpectedly shown for symbol '{symbolKind}'");
+			Assert.That(!shouldShow, $"The analyzer will be unexpectedly shown for symbol '{symbolKind}'");
 		}
 
 		[Test]
@@ -97,10 +97,10 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 			var analyzer = new MemberImplementsInterfaceAnalyzer();
 
 			// Act
-			var shouldShow = analyzer.Show(memberMock.Object);
+			var shouldShow = analyzer.Show(memberMock);
 
 			// Assert
-			Assert.IsFalse(shouldShow, $"The analyzer will be unexpectedly shown for static symbol '{symbolKind}'");
+			Assert.That(!shouldShow, $"The analyzer will be unexpectedly shown for static symbol '{symbolKind}'");
 		}
 
 		[Test]
@@ -114,10 +114,10 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 			var analyzer = new MemberImplementsInterfaceAnalyzer();
 
 			// Act
-			var shouldShow = analyzer.Show(memberMock.Object);
+			var shouldShow = analyzer.Show(memberMock);
 
 			// Assert
-			Assert.IsFalse(shouldShow, $"The analyzer will be unexpectedly shown for symbol '{symbolKind}' and '{typeKind}'");
+			Assert.That(!shouldShow, $"The analyzer will be unexpectedly shown for symbol '{symbolKind}' and '{typeKind}'");
 		}
 
 		[Test]
@@ -131,10 +131,10 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 			var analyzer = new MemberImplementsInterfaceAnalyzer();
 
 			// Act
-			var shouldShow = analyzer.Show(memberMock.Object);
+			var shouldShow = analyzer.Show(memberMock);
 
 			// Assert
-			Assert.IsTrue(shouldShow, $"The analyzer will not be shown for symbol '{symbolKind}' and '{typeKind}'");
+			Assert.That(shouldShow, $"The analyzer will not be shown for symbol '{symbolKind}' and '{typeKind}'");
 		}
 
 		[Test]
@@ -145,16 +145,16 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 			var analyzer = new MemberImplementsInterfaceAnalyzer();
 
 			// Act
-			var results = analyzer.Analyze(symbol, new AnalyzerContext());
+			var results = analyzer.Analyze(symbol, new AnalyzerContext() { AssemblyList = new ILSpyX.AssemblyList(), Language = new CSharpLanguage() });
 
 			// Assert
-			Assert.IsNotNull(results);
-			Assert.AreEqual(1, results.Count());
+			Assert.That(results, Is.Not.Null);
+			Assert.That(results.Count(), Is.EqualTo(1));
 			var result = results.FirstOrDefault() as IMethod;
-			Assert.IsNotNull(result);
-			Assert.IsNotNull(result.DeclaringTypeDefinition);
-			Assert.AreEqual(TypeKind.Interface, result.DeclaringTypeDefinition.Kind);
-			Assert.AreEqual(nameof(ITestInterface), result.DeclaringTypeDefinition.Name);
+			Assert.That(result, Is.Not.Null);
+			Assert.That(result.DeclaringTypeDefinition, Is.Not.Null);
+			Assert.That(result.DeclaringTypeDefinition.Kind, Is.EqualTo(TypeKind.Interface));
+			Assert.That(result.DeclaringTypeDefinition.Name, Is.EqualTo(nameof(ITestInterface)));
 		}
 
 		private ISymbol SetupSymbolForAnalysis(Type type, string methodName)
@@ -163,12 +163,12 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 			return typeDefinition.Methods.First(m => m.Name == methodName);
 		}
 
-		private static Mock<IMember> SetupMemberMock(SymbolKind symbolKind, TypeKind typeKind, bool isStatic)
+		private static IMember SetupMemberMock(SymbolKind symbolKind, TypeKind typeKind, bool isStatic)
 		{
-			var memberMock = new Mock<IMember>();
-			memberMock.Setup(m => m.SymbolKind).Returns(symbolKind);
-			memberMock.Setup(m => m.DeclaringTypeDefinition.Kind).Returns(typeKind);
-			memberMock.Setup(m => m.IsStatic).Returns(isStatic);
+			var memberMock = Substitute.For<IMember>();
+			memberMock.SymbolKind.Returns(symbolKind);
+			memberMock.DeclaringTypeDefinition.Kind.Returns(typeKind);
+			memberMock.IsStatic.Returns(isStatic);
 			return memberMock;
 		}
 

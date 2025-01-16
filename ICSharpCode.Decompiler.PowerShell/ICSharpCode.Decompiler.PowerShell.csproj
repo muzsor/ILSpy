@@ -8,11 +8,9 @@
     <LangVersion>8.0</LangVersion>
   </PropertyGroup>
 
-  <Import Project="..\packages.props" />
-
   <ItemGroup>
-    <PackageReference Include="PowerShellStandard.Library" Version="5.1.0" />
-    <PackageReference Include="Mono.Cecil" Version="$(MonoCecilVersion)" />
+    <PackageReference Include="PowerShellStandard.Library" />
+    <PackageReference Include="Mono.Cecil" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,9 +18,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\ICSharpCode.ILSpyX\PdbProvider\MonoCecilDebugInfoProvider.cs" Link="MonoCecilDebugInfoProvider.cs" />
-    <Compile Include="..\ICSharpCode.ILSpyX\PdbProvider\PortableDebugInfoProvider.cs" Link="PortableDebugInfoProvider.cs" />
-    <Compile Include="..\ICSharpCode.ILSpyX\PdbProvider\DebugInfoUtils.cs" Link="DebugInfoUtils.cs" />
+    <Compile Include="..\ICSharpCode.ILSpyX\PdbProvider\MonoCecilDebugInfoProvider.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="..\ICSharpCode.ILSpyX\PdbProvider\PortableDebugInfoProvider.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="..\ICSharpCode.ILSpyX\PdbProvider\DebugInfoUtils.cs" Link="%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Condition=" '$(OS)' == 'Windows_NT' " Command="powershell -Command &quot;Copy-Item $(ProjectDir)manifest.psd1 $(TargetDir)$(TargetName).psd1&quot;" />
+	<Exec Condition=" '$(OS)' != 'Windows_NT' " Command="pwsh -Command &quot;Copy-Item $(ProjectDir)manifest.psd1 $(TargetDir)$(TargetName).psd1&quot;" />
+  </Target>
 </Project>

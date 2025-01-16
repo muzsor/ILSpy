@@ -18,19 +18,16 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.Composition;
+using System.Composition;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 
-using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Highlighting;
-using ICSharpCode.AvalonEdit.Utils;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
 using ICSharpCode.Decompiler.CSharp.OutputVisitor;
@@ -41,8 +38,7 @@ using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.Output;
 using ICSharpCode.Decompiler.Solution;
 using ICSharpCode.Decompiler.TypeSystem;
-using ICSharpCode.Decompiler.Util;
-using ICSharpCode.ILSpy.Options;
+using ICSharpCode.ILSpy.AssemblyTree;
 using ICSharpCode.ILSpy.TextView;
 using ICSharpCode.ILSpy.TreeNodes;
 using ICSharpCode.ILSpyX;
@@ -57,6 +53,7 @@ namespace ICSharpCode.ILSpy
 	/// please directly use the CSharpDecompiler class.
 	/// </summary>
 	[Export(typeof(Language))]
+	[Shared]
 	public class CSharpLanguage : Language
 	{
 		string name = "C#";
@@ -70,7 +67,7 @@ namespace ICSharpCode.ILSpy
 			int transformCount = 0;
 			foreach (var transform in CSharpDecompiler.GetAstTransforms())
 			{
-				yield return new CSharpLanguage {
+				yield return new() {
 					transformCount = transformCount,
 					name = "C# - " + lastTransformName,
 					showAllMembers = true
@@ -78,7 +75,7 @@ namespace ICSharpCode.ILSpy
 				lastTransformName = "after " + transform.GetType().Name;
 				transformCount++;
 			}
-			yield return new CSharpLanguage {
+			yield return new() {
 				name = "C# - " + lastTransformName,
 				showAllMembers = true
 			};
@@ -118,15 +115,16 @@ namespace ICSharpCode.ILSpy
 						new LanguageVersion(Decompiler.CSharp.LanguageVersion.CSharp9_0.ToString(), "C# 9.0 / VS 2019.8"),
 						new LanguageVersion(Decompiler.CSharp.LanguageVersion.CSharp10_0.ToString(), "C# 10.0 / VS 2022"),
 						new LanguageVersion(Decompiler.CSharp.LanguageVersion.CSharp11_0.ToString(), "C# 11.0 / VS 2022.4"),
+						new LanguageVersion(Decompiler.CSharp.LanguageVersion.CSharp12_0.ToString(), "C# 12.0 / VS 2022.8"),
 					};
 				}
 				return versions;
 			}
 		}
 
-		CSharpDecompiler CreateDecompiler(PEFile module, DecompilationOptions options)
+		CSharpDecompiler CreateDecompiler(MetadataFile module, DecompilationOptions options)
 		{
-			CSharpDecompiler decompiler = new CSharpDecompiler(module, module.GetAssemblyResolver(), options.DecompilerSettings);
+			CSharpDecompiler decompiler = new CSharpDecompiler(module, module.GetAssemblyResolver(options.DecompilerSettings.AutoLoadAssemblyReferences), options.DecompilerSettings);
 			decompiler.CancellationToken = options.CancellationToken;
 			decompiler.DebugInfoProvider = module.GetDebugInfoOrNull();
 			while (decompiler.AstTransforms.Count > transformCount)
@@ -152,7 +150,7 @@ namespace ICSharpCode.ILSpy
 
 		public override void DecompileMethod(IMethod method, ITextOutput output, DecompilationOptions options)
 		{
-			PEFile assembly = method.ParentModule.PEFile;
+			MetadataFile assembly = method.ParentModule.MetadataFile;
 			CSharpDecompiler decompiler = CreateDecompiler(assembly, options);
 			AddReferenceAssemblyWarningMessage(assembly, output);
 			AddReferenceWarningMessage(assembly, output);
@@ -208,19 +206,38 @@ namespace ICSharpCode.ILSpy
 								removedSymbols.Add(fd.GetSymbol());
 							}
 							break;
+						case EventDeclaration ed:
+							// Remove any events without initializers
+							if (ed.Variables.All(v => v.Initializer.IsNull))
+							{
+								ed.Remove();
+								removedSymbols.Add(ed.GetSymbol());
+							}
+							break;
+						case PropertyDeclaration pd:
+							// Remove any properties without initializers
+							if (pd.Initializer.IsNull)
+							{
+								pd.Remove();
+								removedSymbols.Add(pd.GetSymbol());
+							}
+							break;
+						case CustomEventDeclaration ced:
+						case IndexerDeclaration id:
+							node.Remove();
+							removedSymbols.Add(node.GetSymbol());
+							break;
 					}
 				}
 				if (ctorDecl?.Initializer.ConstructorInitializerType == ConstructorInitializerType.This)
 				{
-					// remove all fields
+					// remove all non-constructor declarations
 					foreach (var node in rootNode.Children)
 					{
-						switch (node)
+						if (node is not ConstructorDeclaration)
 						{
-							case FieldDeclaration fd:
-								fd.Remove();
-								removedSymbols.Add(fd.GetSymbol());
-								break;
+							node.Remove();
+							removedSymbols.Add(node.GetSymbol());
 						}
 					}
 				}
@@ -234,7 +251,7 @@ namespace ICSharpCode.ILSpy
 
 		public override void DecompileProperty(IProperty property, ITextOutput output, DecompilationOptions options)
 		{
-			PEFile assembly = property.ParentModule.PEFile;
+			MetadataFile assembly = property.ParentModule.MetadataFile;
 			CSharpDecompiler decompiler = CreateDecompiler(assembly, options);
 			AddReferenceAssemblyWarningMessage(assembly, output);
 			AddReferenceWarningMessage(assembly, output);
@@ -245,7 +262,7 @@ namespace ICSharpCode.ILSpy
 
 		public override void DecompileField(IField field, ITextOutput output, DecompilationOptions options)
 		{
-			PEFile assembly = field.ParentModule.PEFile;
+			MetadataFile assembly = field.ParentModule.MetadataFile;
 			CSharpDecompiler decompiler = CreateDecompiler(assembly, options);
 			AddReferenceAssemblyWarningMessage(assembly, output);
 			AddReferenceWarningMessage(assembly, output);
@@ -271,6 +288,16 @@ namespace ICSharpCode.ILSpy
 			{
 				if (!field.MetadataToken.IsNil && field.IsStatic == isStatic)
 					members.Add(field.MetadataToken);
+			}
+			foreach (var e in type.Events)
+			{
+				if (!e.MetadataToken.IsNil && e.IsStatic == isStatic)
+					members.Add(e.MetadataToken);
+			}
+			foreach (var p in type.Properties)
+			{
+				if (!p.MetadataToken.IsNil && p.IsStatic == isStatic && !p.IsIndexer)
+					members.Add(p.MetadataToken);
 			}
 			foreach (var ctor in type.Methods)
 			{
@@ -314,7 +341,7 @@ namespace ICSharpCode.ILSpy
 
 		public override void DecompileEvent(IEvent @event, ITextOutput output, DecompilationOptions options)
 		{
-			PEFile assembly = @event.ParentModule.PEFile;
+			MetadataFile assembly = @event.ParentModule.MetadataFile;
 			CSharpDecompiler decompiler = CreateDecompiler(assembly, options);
 			AddReferenceAssemblyWarningMessage(assembly, output);
 			AddReferenceWarningMessage(assembly, output);
@@ -325,7 +352,7 @@ namespace ICSharpCode.ILSpy
 
 		public override void DecompileType(ITypeDefinition type, ITextOutput output, DecompilationOptions options)
 		{
-			PEFile assembly = type.ParentModule.PEFile;
+			MetadataFile assembly = type.ParentModule.MetadataFile;
 			CSharpDecompiler decompiler = CreateDecompiler(assembly, options);
 			AddReferenceAssemblyWarningMessage(assembly, output);
 			AddReferenceWarningMessage(assembly, output);
@@ -334,21 +361,21 @@ namespace ICSharpCode.ILSpy
 			WriteCode(output, options.DecompilerSettings, decompiler.Decompile(type.MetadataToken), decompiler.TypeSystem);
 		}
 
-		void AddReferenceWarningMessage(PEFile module, ITextOutput output)
+		void AddReferenceWarningMessage(MetadataFile module, ITextOutput output)
 		{
-			var loadedAssembly = MainWindow.Instance.CurrentAssemblyList.GetAssemblies().FirstOrDefault(la => la.GetPEFileOrNull() == module);
+			var loadedAssembly = AssemblyTreeModel.AssemblyList.GetAssemblies().FirstOrDefault(la => la.GetMetadataFileOrNull() == module);
 			if (loadedAssembly == null || !loadedAssembly.LoadedAssemblyReferencesInfo.HasErrors)
 				return;
 			string line1 = Properties.Resources.WarningSomeAssemblyReference;
 			string line2 = Properties.Resources.PropertyManuallyMissingReferencesListLoadedAssemblies;
 			AddWarningMessage(module, output, line1, line2, Properties.Resources.ShowAssemblyLoad, Images.ViewCode, delegate {
-				ILSpyTreeNode assemblyNode = MainWindow.Instance.FindTreeNode(module);
+				ILSpyTreeNode assemblyNode = AssemblyTreeModel.FindTreeNode(module);
 				assemblyNode.EnsureLazyChildren();
-				MainWindow.Instance.SelectNode(assemblyNode.Children.OfType<ReferenceFolderTreeNode>().Single());
+				AssemblyTreeModel.SelectNode(assemblyNode.Children.OfType<ReferenceFolderTreeNode>().Single());
 			});
 		}
 
-		void AddReferenceAssemblyWarningMessage(PEFile module, ITextOutput output)
+		void AddReferenceAssemblyWarningMessage(MetadataFile module, ITextOutput output)
 		{
 			var metadata = module.Metadata;
 			if (!metadata.GetCustomAttributes(Handle.AssemblyDefinition).HasKnownAttribute(metadata, KnownAttribute.ReferenceAssembly))
@@ -357,7 +384,7 @@ namespace ICSharpCode.ILSpy
 			AddWarningMessage(module, output, line1);
 		}
 
-		void AddWarningMessage(PEFile module, ITextOutput output, string line1, string line2 = null,
+		void AddWarningMessage(MetadataFile module, ITextOutput output, string line1, string line2 = null,
 			string buttonText = null, System.Windows.Media.ImageSource buttonImage = null, RoutedEventHandler buttonClickHandler = null)
 		{
 			if (output is ISmartTextOutput fancyOutput)
@@ -397,7 +424,7 @@ namespace ICSharpCode.ILSpy
 
 		public override ProjectId DecompileAssembly(LoadedAssembly assembly, ITextOutput output, DecompilationOptions options)
 		{
-			var module = assembly.GetPEFileOrNull();
+			var module = assembly.GetMetadataFileOrNull();
 			if (module == null)
 			{
 				return null;
@@ -408,8 +435,9 @@ namespace ICSharpCode.ILSpy
 				{
 					options.DecompilerSettings.UseSdkStyleProjectFormat = false;
 				}
-				var decompiler = new ILSpyWholeProjectDecompiler(assembly, options);
-				decompiler.ProgressIndicator = options.Progress;
+				var decompiler = new ILSpyWholeProjectDecompiler(assembly, options) {
+					ProgressIndicator = options.Progress
+				};
 				return decompiler.DecompileProject(module, options.SaveAsProjectDirectory, new TextOutputWriter(output), options.CancellationToken);
 			}
 			else
@@ -420,49 +448,60 @@ namespace ICSharpCode.ILSpy
 				base.DecompileAssembly(assembly, output, options);
 
 				// don't automatically load additional assemblies when an assembly node is selected in the tree view
-				IAssemblyResolver assemblyResolver = assembly.GetAssemblyResolver(loadOnDemand: options.FullDecompilation);
+				IAssemblyResolver assemblyResolver = assembly.GetAssemblyResolver(loadOnDemand: options.FullDecompilation && options.DecompilerSettings.AutoLoadAssemblyReferences);
 				var typeSystem = new DecompilerTypeSystem(module, assemblyResolver, options.DecompilerSettings);
 				var globalType = typeSystem.MainModule.TypeDefinitions.FirstOrDefault();
 				if (globalType != null)
 				{
 					output.Write("// Global type: ");
-					output.WriteReference(globalType, globalType.FullName);
+					output.WriteReference(globalType, EscapeName(globalType.FullName));
 					output.WriteLine();
 				}
 				var metadata = module.Metadata;
-				var corHeader = module.Reader.PEHeaders.CorHeader;
-				var entrypointHandle = MetadataTokenHelpers.EntityHandleOrNil(corHeader.EntryPointTokenOrRelativeVirtualAddress);
-				if (!entrypointHandle.IsNil && entrypointHandle.Kind == HandleKind.MethodDefinition)
+				var corHeader = module.CorHeader;
+				if (module is PEFile peFile && corHeader != null)
 				{
-					var entrypoint = typeSystem.MainModule.ResolveMethod(entrypointHandle, new Decompiler.TypeSystem.GenericContext());
-					if (entrypoint != null)
+					var entrypointHandle = MetadataTokenHelpers.EntityHandleOrNil(corHeader.EntryPointTokenOrRelativeVirtualAddress);
+					if (!entrypointHandle.IsNil && entrypointHandle.Kind == HandleKind.MethodDefinition)
 					{
-						output.Write("// Entry point: ");
-						output.WriteReference(entrypoint, entrypoint.DeclaringType.FullName + "." + entrypoint.Name);
-						output.WriteLine();
+						var entrypoint = typeSystem.MainModule.ResolveMethod(entrypointHandle, new Decompiler.TypeSystem.GenericContext());
+						if (entrypoint != null)
+						{
+							output.Write("// Entry point: ");
+							output.WriteReference(entrypoint, EscapeName(entrypoint.DeclaringType.FullName + "." + entrypoint.Name));
+							output.WriteLine();
+						}
+					}
+					output.WriteLine("// Architecture: " + GetPlatformDisplayName(peFile));
+					if ((corHeader.Flags & System.Reflection.PortableExecutable.CorFlags.ILOnly) == 0)
+					{
+						output.WriteLine("// This assembly contains unmanaged code.");
+					}
+					string runtimeName = GetRuntimeDisplayName(module);
+					if (runtimeName != null)
+					{
+						output.WriteLine("// Runtime: " + runtimeName);
+					}
+					if ((corHeader.Flags & System.Reflection.PortableExecutable.CorFlags.StrongNameSigned) != 0)
+					{
+						output.WriteLine("// This assembly is signed with a strong name key.");
+					}
+					if (peFile.Reader.ReadDebugDirectory().Any(d => d.Type == DebugDirectoryEntryType.Reproducible))
+					{
+						output.WriteLine("// This assembly was compiled using the /deterministic option.");
+					}
+					if (module.Metadata.MetadataKind != MetadataKind.Ecma335)
+					{
+						output.WriteLine("// This assembly was loaded with Windows Runtime projections applied.");
 					}
 				}
-				output.WriteLine("// Architecture: " + GetPlatformDisplayName(module));
-				if ((corHeader.Flags & System.Reflection.PortableExecutable.CorFlags.ILOnly) == 0)
+				else
 				{
-					output.WriteLine("// This assembly contains unmanaged code.");
-				}
-				string runtimeName = GetRuntimeDisplayName(module);
-				if (runtimeName != null)
-				{
-					output.WriteLine("// Runtime: " + runtimeName);
-				}
-				if ((corHeader.Flags & System.Reflection.PortableExecutable.CorFlags.StrongNameSigned) != 0)
-				{
-					output.WriteLine("// This assembly is signed with a strong name key.");
-				}
-				if (module.Reader.ReadDebugDirectory().Any(d => d.Type == DebugDirectoryEntryType.Reproducible))
-				{
-					output.WriteLine("// This assembly was compiled using the /deterministic option.");
-				}
-				if (module.Metadata.MetadataKind != MetadataKind.Ecma335)
-				{
-					output.WriteLine("// This assembly was loaded with Windows Runtime projections applied.");
+					string runtimeName = GetRuntimeDisplayName(module);
+					if (runtimeName != null)
+					{
+						output.WriteLine("// Runtime: " + runtimeName);
+					}
 				}
 				if (metadata.IsAssembly)
 				{
@@ -511,7 +550,7 @@ namespace ICSharpCode.ILSpy
 			readonly DecompilationOptions options;
 
 			public ILSpyWholeProjectDecompiler(LoadedAssembly assembly, DecompilationOptions options)
-				: base(options.DecompilerSettings, assembly.GetAssemblyResolver(), assembly.GetAssemblyReferenceClassifier(options.DecompilerSettings.ApplyWindowsRuntimeProjections), assembly.GetDebugInfoOrNull())
+				: base(options.DecompilerSettings, assembly.GetAssemblyResolver(options.DecompilerSettings.AutoLoadAssemblyReferences, options.DecompilerSettings.ApplyWindowsRuntimeProjections), null, assembly.GetAssemblyReferenceClassifier(options.DecompilerSettings.ApplyWindowsRuntimeProjections), assembly.GetDebugInfoOrNull())
 			{
 				this.assembly = assembly;
 				this.options = options;
@@ -520,7 +559,7 @@ namespace ICSharpCode.ILSpy
 			protected override IEnumerable<ProjectItemInfo> WriteResourceToFile(string fileName, string resourceName, Stream entryStream)
 			{
 				var context = new ResourceFileHandlerContext(options);
-				foreach (var handler in App.ExportProvider.GetExportedValues<IResourceFileHandler>())
+				foreach (var handler in ResourceFileHandlers)
 				{
 					if (handler.CanHandle(fileName, context))
 					{
@@ -534,19 +573,19 @@ namespace ICSharpCode.ILSpy
 			}
 		}
 
-		static CSharpAmbience CreateAmbience()
+		CSharpAmbience CreateAmbience()
 		{
 			CSharpAmbience ambience = new CSharpAmbience();
 			// Do not forget to update CSharpAmbienceTests.ILSpyMainTreeViewTypeFlags, if this ever changes.
 			ambience.ConversionFlags = ConversionFlags.ShowTypeParameterList | ConversionFlags.PlaceReturnTypeAfterParameterList;
-			if (MainWindow.Instance.CurrentDecompilerSettings.LiftNullables)
+			if (SettingsService.DecompilerSettings.LiftNullables)
 			{
 				ambience.ConversionFlags |= ConversionFlags.UseNullableSpecifierForValueTypes;
 			}
 			return ambience;
 		}
 
-		static string EntityToString(IEntity entity, bool includeDeclaringTypeName, bool includeNamespace, bool includeNamespaceOfDeclaringTypeName)
+		string EntityToString(IEntity entity, bool includeDeclaringTypeName, bool includeNamespace, bool includeNamespaceOfDeclaringTypeName)
 		{
 			// Do not forget to update CSharpAmbienceTests, if this ever changes.
 			var ambience = CreateAmbience();
@@ -615,30 +654,30 @@ namespace ICSharpCode.ILSpy
 			return EntityToString(@event, includeDeclaringTypeName, includeNamespace, includeNamespaceOfDeclaringTypeName);
 		}
 
-		string ToCSharpString(MetadataReader metadata, TypeDefinitionHandle handle, bool fullName, bool omitGenerics)
+		static string ToCSharpString(MetadataReader metadata, TypeDefinitionHandle handle, bool fullName, bool omitGenerics)
 		{
-			StringBuilder builder = new StringBuilder();
 			var currentTypeDefHandle = handle;
 			var typeDef = metadata.GetTypeDefinition(currentTypeDefHandle);
+			List<string> builder = new List<string>();
 
 			while (!currentTypeDefHandle.IsNil)
 			{
-				if (builder.Length > 0)
-					builder.Insert(0, '.');
+				if (builder.Count > 0)
+					builder.Add(".");
 				typeDef = metadata.GetTypeDefinition(currentTypeDefHandle);
 				var part = ReflectionHelper.SplitTypeParameterCountFromReflectionName(metadata.GetString(typeDef.Name), out int typeParamCount);
 				var genericParams = typeDef.GetGenericParameters();
 				if (!omitGenerics && genericParams.Count > 0)
 				{
-					builder.Insert(0, '>');
+					builder.Add(">");
 					int firstIndex = genericParams.Count - typeParamCount;
 					for (int i = genericParams.Count - 1; i >= genericParams.Count - typeParamCount; i--)
 					{
-						builder.Insert(0, metadata.GetString(metadata.GetGenericParameter(genericParams[i]).Name));
-						builder.Insert(0, i == firstIndex ? '<' : ',');
+						builder.Add(metadata.GetString(metadata.GetGenericParameter(genericParams[i]).Name));
+						builder.Add(i == firstIndex ? "<" : ",");
 					}
 				}
-				builder.Insert(0, part);
+				builder.Add(part);
 				currentTypeDefHandle = typeDef.GetDeclaringType();
 				if (!fullName)
 					break;
@@ -646,14 +685,29 @@ namespace ICSharpCode.ILSpy
 
 			if (fullName && !typeDef.Namespace.IsNil)
 			{
-				builder.Insert(0, '.');
-				builder.Insert(0, metadata.GetString(typeDef.Namespace));
+				builder.Add(".");
+				builder.Add(metadata.GetString(typeDef.Namespace));
 			}
 
-			return builder.ToString();
+			switch (builder.Count)
+			{
+				case 0:
+					return string.Empty;
+				case 1:
+					return builder[0];
+				case 2:
+					return builder[1] + builder[0];
+				case 3:
+					return builder[2] + builder[1] + builder[0];
+				case 4:
+					return builder[3] + builder[2] + builder[1] + builder[0];
+				default:
+					builder.Reverse();
+					return string.Concat(builder);
+			}
 		}
 
-		public override string GetEntityName(PEFile module, EntityHandle handle, bool fullName, bool omitGenerics)
+		public override string GetEntityName(MetadataFile module, EntityHandle handle, bool fullName, bool omitGenerics)
 		{
 			MetadataReader metadata = module.Metadata;
 			switch (handle.Kind)
@@ -726,8 +780,8 @@ namespace ICSharpCode.ILSpy
 
 		public override bool ShowMember(IEntity member)
 		{
-			PEFile assembly = member.ParentModule.PEFile;
-			return showAllMembers || !CSharpDecompiler.MemberIsHidden(assembly, member.MetadataToken, MainWindow.Instance.CurrentDecompilerSettings);
+			MetadataFile assembly = member.ParentModule.MetadataFile;
+			return showAllMembers || !CSharpDecompiler.MemberIsHidden(assembly, member.MetadataToken, SettingsService.DecompilerSettings);
 		}
 
 		public override RichText GetRichTextTooltip(IEntity entity)
@@ -736,7 +790,7 @@ namespace ICSharpCode.ILSpy
 			var output = new StringWriter();
 			var decoratedWriter = new TextWriterTokenWriter(output);
 			var writer = new CSharpHighlightingTokenWriter(TokenWriter.InsertRequiredSpaces(decoratedWriter), locatable: decoratedWriter);
-			var settings = MainWindow.Instance.CurrentDecompilerSettings;
+			var settings = SettingsService.DecompilerSettings;
 			if (!settings.LiftNullables)
 			{
 				flags &= ~ConversionFlags.UseNullableSpecifierForValueTypes;
@@ -748,6 +802,14 @@ namespace ICSharpCode.ILSpy
 			if (settings.RecordStructs)
 			{
 				flags |= ConversionFlags.SupportRecordStructs;
+			}
+			if (settings.UnsignedRightShift)
+			{
+				flags |= ConversionFlags.SupportUnsignedRightShift;
+			}
+			if (settings.CheckedOperators)
+			{
+				flags |= ConversionFlags.SupportOperatorChecked;
 			}
 			if (settings.InitAccessors)
 			{
@@ -763,7 +825,7 @@ namespace ICSharpCode.ILSpy
 			return new RichText(output.ToString(), writer.HighlightingModel);
 		}
 
-		public override CodeMappingInfo GetCodeMappingInfo(PEFile module, EntityHandle member)
+		public override CodeMappingInfo GetCodeMappingInfo(MetadataFile module, EntityHandle member)
 		{
 			return CSharpDecompiler.GetCodeMappingInfo(module, member);
 		}

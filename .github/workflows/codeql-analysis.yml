@@ -6,8 +6,15 @@ on:
   pull_request:
     branches: [ master, release/** ]
 
+permissions:
+  contents: read
+
 jobs:
   analyze:
+    permissions:
+      actions: read  # for github/codeql-action/init to get workflow details
+      security-events: write  # for github/codeql-action/analyze to upload SARIF results
+      
     name: Analyze
     runs-on: ubuntu-latest
 
@@ -18,22 +25,23 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        persist-credentials: false
     
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v3
+    - uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: 6.0.x
+        dotnet-version: '8.0.x'
+        dotnet-quality: 'ga'
 
     - name: Build
       run: dotnet build ILSpy.XPlat.slnf --configuration Release
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@v3

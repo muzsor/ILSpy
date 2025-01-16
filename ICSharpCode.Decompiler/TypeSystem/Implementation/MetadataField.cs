@@ -189,6 +189,13 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 			return b.GetAttribute(metadata, def.GetCustomAttributes(), attribute, SymbolKind.Field);
 		}
 
+		public bool ReturnTypeIsRefReadOnly {
+			get {
+				var def = module.metadata.GetFieldDefinition(handle);
+				return def.GetCustomAttributes().HasKnownAttribute(module.metadata, KnownAttribute.IsReadOnly);
+			}
+		}
+
 		public string FullName => $"{DeclaringType?.FullName}.{Name}";
 		public string ReflectionName => $"{DeclaringType?.ReflectionName}.{Name}";
 		public string Namespace => DeclaringType?.Namespace ?? string.Empty;
@@ -292,14 +299,14 @@ namespace ICSharpCode.Decompiler.TypeSystem.Implementation
 		{
 			if (obj is MetadataField f)
 			{
-				return handle == f.handle && module.PEFile == f.module.PEFile;
+				return handle == f.handle && module.MetadataFile == f.module.MetadataFile;
 			}
 			return false;
 		}
 
 		public override int GetHashCode()
 		{
-			return 0x11dda32b ^ module.PEFile.GetHashCode() ^ handle.GetHashCode();
+			return 0x11dda32b ^ module.MetadataFile.GetHashCode() ^ handle.GetHashCode();
 		}
 
 		bool IMember.Equals(IMember obj, TypeVisitor typeNormalization)

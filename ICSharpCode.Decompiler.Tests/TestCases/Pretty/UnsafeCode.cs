@@ -30,7 +30,11 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 		{
 			public static object StaticObj;
 
+#if CS110 && NET70
+			public nint A;
+#else
 			public IntPtr A;
+#endif
 		}
 
 		private struct UnmanagedStruct
@@ -427,9 +431,9 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public unsafe void PinFixedMember(ref StructWithFixedSizeMembers m)
 		{
-			fixed (int* ptr = m.Integers)
+			fixed (int* integers = m.Integers)
 			{
-				UsePointer(ptr);
+				UsePointer(integers);
 			}
 		}
 
@@ -605,6 +609,18 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 			return value.Integers[(int)s];
 		}
 
+#if CS90
+		private unsafe static void* CastNIntToVoidPtr(nint intptr)
+		{
+			return (void*)intptr;
+		}
+
+		private unsafe static void* CastNIntToVoidPtr(nuint intptr)
+		{
+			return (void*)intptr;
+		}
+#endif
+#if !(CS110 && NET70)
 		private unsafe static void* CastToVoidPtr(IntPtr intptr)
 		{
 			return (void*)intptr;
@@ -614,6 +630,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 		{
 			return (void*)intptr;
 		}
+#endif
 
 		private unsafe static void* CastToVoidPtr(int* intptr)
 		{

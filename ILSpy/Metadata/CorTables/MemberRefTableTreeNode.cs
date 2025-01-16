@@ -20,23 +20,16 @@ using System.Collections.Generic;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.Disassembler;
-using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 
 namespace ICSharpCode.ILSpy.Metadata
 {
 	internal class MemberRefTableTreeNode : MetadataTableTreeNode
 	{
-		public MemberRefTableTreeNode(PEFile module)
-			: base(HandleKind.MemberReference, module)
+		public MemberRefTableTreeNode(MetadataFile metadataFile)
+			: base(TableIndex.MemberRef, metadataFile)
 		{
 		}
-
-		public override object Text => $"0A MemberRef ({module.Metadata.GetTableRowCount(TableIndex.MemberRef)})";
-
-		public override object Icon => Images.Literal;
 
 		public override bool View(ViewModels.TabPageModel tabPage)
 		{
@@ -44,14 +37,14 @@ namespace ICSharpCode.ILSpy.Metadata
 			tabPage.SupportsLanguageSwitching = false;
 
 			var view = Helpers.PrepareDataGrid(tabPage, this);
-			var metadata = module.Metadata;
+			var metadata = metadataFile.Metadata;
 
 			var list = new List<MemberRefEntry>();
 			MemberRefEntry scrollTargetEntry = default;
 
 			foreach (var row in metadata.MemberReferences)
 			{
-				MemberRefEntry entry = new MemberRefEntry(module, row);
+				MemberRefEntry entry = new MemberRefEntry(metadataFile, row);
 				if (entry.RID == this.scrollTarget)
 				{
 					scrollTargetEntry = entry;
@@ -73,9 +66,7 @@ namespace ICSharpCode.ILSpy.Metadata
 
 		struct MemberRefEntry
 		{
-			readonly int metadataOffset;
-			readonly PEFile module;
-			readonly MetadataReader metadata;
+			readonly MetadataFile metadataFile;
 			readonly MemberReferenceHandle handle;
 			readonly MemberReference memberRef;
 
@@ -83,56 +74,39 @@ namespace ICSharpCode.ILSpy.Metadata
 
 			public int Token => MetadataTokens.GetToken(handle);
 
-			public int Offset => metadataOffset
-				+ metadata.GetTableMetadataOffset(TableIndex.MemberRef)
-				+ metadata.GetTableRowSize(TableIndex.MemberRef) * (RID - 1);
+			public int Offset => metadataFile.MetadataOffset
+				+ metadataFile.Metadata.GetTableMetadataOffset(TableIndex.MemberRef)
+				+ metadataFile.Metadata.GetTableRowSize(TableIndex.MemberRef) * (RID - 1);
 
-			[StringFormat("X8")]
-			[LinkToTable]
+			[ColumnInfo("X8", Kind = ColumnKind.Token)]
 			public int Parent => MetadataTokens.GetToken(memberRef.Parent);
 
 			public void OnParentClick()
 			{
-				MainWindow.Instance.JumpToReference(new EntityReference(module, memberRef.Parent, protocol: "metadata"));
+				MessageBus.Send(this, new NavigateToReferenceEventArgs(new EntityReference(metadataFile, memberRef.Parent, protocol: "metadata")));
 			}
 
-			public string ParentTooltip {
-				get {
-					ITextOutput output = new PlainTextOutput();
-					memberRef.Parent.WriteTo(module, output, default);
-					return output.ToString();
-				}
-			}
+			string parentTooltip;
+			public string ParentTooltip => GenerateTooltip(ref parentTooltip, metadataFile, memberRef.Parent);
 
-			public string Name => metadata.GetString(memberRef.Name);
+			public string Name => metadataFile.Metadata.GetString(memberRef.Name);
 
 			public string NameTooltip => $"{MetadataTokens.GetHeapOffset(memberRef.Name):X} \"{Name}\"";
 
-			[StringFormat("X")]
+			[ColumnInfo("X8", Kind = ColumnKind.HeapOffset)]
 			public int Signature => MetadataTokens.GetHeapOffset(memberRef.Signature);
 
-			public string SignatureTooltip {
-				get {
-					ITextOutput output = new PlainTextOutput();
-					var context = new MetadataGenericContext(default(TypeDefinitionHandle), module);
-					((EntityHandle)handle).WriteTo(module, output, context);
-					return output.ToString();
-				}
-			}
+			string signatureTooltip;
+			public string SignatureTooltip => GenerateTooltip(ref signatureTooltip, metadataFile, handle);
 
-			public MemberRefEntry(PEFile module, MemberReferenceHandle handle)
+			public MemberRefEntry(MetadataFile metadataFile, MemberReferenceHandle handle)
 			{
-				this.metadataOffset = module.Reader.PEHeaders.MetadataStartOffset;
-				this.module = module;
-				this.metadata = module.Metadata;
+				this.metadataFile = metadataFile;
 				this.handle = handle;
-				this.memberRef = metadata.GetMemberReference(handle);
+				this.memberRef = metadataFile.Metadata.GetMemberReference(handle);
+				this.signatureTooltip = null;
+				this.parentTooltip = null;
 			}
-		}
-
-		public override void Decompile(Language language, ITextOutput output, DecompilationOptions options)
-		{
-			language.WriteCommentLine(output, "MemberRefs");
 		}
 	}
 }

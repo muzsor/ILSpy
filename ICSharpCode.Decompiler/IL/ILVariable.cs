@@ -438,21 +438,6 @@ namespace ICSharpCode.Decompiler.IL
 		/// </summary>
 		internal bool RemoveIfRedundant;
 
-		private bool hasNullCheck;
-
-		/// <summary>
-		/// Gets/sets whether a parameter has an auto-generated null check, i.e., the !! modifier.
-		/// Returns false for all variables except parameters.
-		/// </summary>
-		public bool HasNullCheck {
-			get => hasNullCheck;
-			set {
-				if (Kind != VariableKind.Parameter && value)
-					throw new InvalidOperationException("Cannot set HasNullCheck on local variables!");
-				hasNullCheck = value;
-			}
-		}
-
 		public ILVariable(VariableKind kind, IType type, int? index = null)
 		{
 			if (type == null)
@@ -652,9 +637,13 @@ namespace ICSharpCode.Decompiler.IL
 
 		public int GetHashCode(ILVariable obj)
 		{
-			if (obj.Kind == VariableKind.StackSlot)
+			if (obj.Kind is VariableKind.StackSlot or VariableKind.PatternLocal)
 				return obj.GetHashCode();
-			return (obj.Function, obj.Kind, obj.Index).GetHashCode();
+			if (obj.Index != null)
+				return (obj.Function, obj.Kind, obj.Index).GetHashCode();
+			if (obj.StateMachineField != null)
+				return (obj.Function, obj.Kind, obj.StateMachineField).GetHashCode();
+			return obj.GetHashCode();
 		}
 	}
 }

@@ -21,6 +21,7 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 
+using ICSharpCode.Decompiler.DebugInfo;
 using ICSharpCode.Decompiler.TypeSystem.Implementation;
 using ICSharpCode.Decompiler.Util;
 
@@ -40,11 +41,12 @@ namespace ICSharpCode.Decompiler.TypeSystem
 			SRM.MetadataReader metadata,
 			TypeSystemOptions options,
 			Nullability nullableContext,
-			bool typeChildrenOnly = false)
+			bool typeChildrenOnly = false,
+			SRM.CustomAttributeHandleCollection? additionalAttributes = null)
 		{
 			bool hasDynamicAttribute = false;
 			bool[] dynamicAttributeData = null;
-			bool hasNativeIntegersAttribute = false;
+			bool hasNativeIntegersAttribute = (options & TypeSystemOptions.NativeIntegersWithoutAttribute) != 0;
 			bool[] nativeIntegersAttributeData = null;
 			string[] tupleElementNames = null;
 			Nullability nullability;
@@ -57,71 +59,85 @@ namespace ICSharpCode.Decompiler.TypeSystem
 			{
 				nullability = Nullability.Oblivious;
 			}
+
+			void ProcessAttribute(SRM.CustomAttributeHandle attrHandle)
+			{
+				var attr = metadata.GetCustomAttribute(attrHandle);
+				var attrType = attr.GetAttributeType(metadata);
+				if ((options & TypeSystemOptions.Dynamic) != 0 && attrType.IsKnownType(metadata, KnownAttribute.Dynamic))
+				{
+					hasDynamicAttribute = true;
+					var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
+					if (ctor.FixedArguments.Length == 1)
+					{
+						var arg = ctor.FixedArguments[0];
+						if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
+							&& values.All(v => v.Value is bool))
+						{
+							dynamicAttributeData = values.SelectArray(v => (bool)v.Value);
+						}
+					}
+				}
+				else if ((options & TypeSystemOptions.NativeIntegers) != 0 && attrType.IsKnownType(metadata, KnownAttribute.NativeInteger))
+				{
+					hasNativeIntegersAttribute = true;
+					var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
+					if (ctor.FixedArguments.Length == 1)
+					{
+						var arg = ctor.FixedArguments[0];
+						if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
+							&& values.All(v => v.Value is bool))
+						{
+							nativeIntegersAttributeData = values.SelectArray(v => (bool)v.Value);
+						}
+					}
+				}
+				else if ((options & TypeSystemOptions.Tuple) != 0 && attrType.IsKnownType(metadata, KnownAttribute.TupleElementNames))
+				{
+					var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
+					if (ctor.FixedArguments.Length == 1)
+					{
+						var arg = ctor.FixedArguments[0];
+						if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
+							&& values.All(v => v.Value is string || v.Value == null))
+						{
+							tupleElementNames = values.SelectArray(v => (string)v.Value);
+						}
+					}
+				}
+				else if ((options & TypeSystemOptions.NullabilityAnnotations) != 0 && attrType.IsKnownType(metadata, KnownAttribute.Nullable))
+				{
+					var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
+					if (ctor.FixedArguments.Length == 1)
+					{
+						var arg = ctor.FixedArguments[0];
+						if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
+							&& values.All(v => v.Value is byte b && b <= 2))
+						{
+							nullableAttributeData = values.SelectArray(v => (Nullability)(byte)v.Value);
+						}
+						else if (arg.Value is byte b && b <= 2)
+						{
+							nullability = (Nullability)b;
+						}
+					}
+				}
+			}
+
 			const TypeSystemOptions relevantOptions = TypeSystemOptions.Dynamic | TypeSystemOptions.Tuple | TypeSystemOptions.NullabilityAnnotations | TypeSystemOptions.NativeIntegers;
 			if (attributes != null && (options & relevantOptions) != 0)
 			{
 				foreach (var attrHandle in attributes.Value)
 				{
-					var attr = metadata.GetCustomAttribute(attrHandle);
-					var attrType = attr.GetAttributeType(metadata);
-					if ((options & TypeSystemOptions.Dynamic) != 0 && attrType.IsKnownType(metadata, KnownAttribute.Dynamic))
-					{
-						hasDynamicAttribute = true;
-						var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
-						if (ctor.FixedArguments.Length == 1)
-						{
-							var arg = ctor.FixedArguments[0];
-							if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
-								&& values.All(v => v.Value is bool))
-							{
-								dynamicAttributeData = values.SelectArray(v => (bool)v.Value);
-							}
-						}
-					}
-					else if ((options & TypeSystemOptions.NativeIntegers) != 0 && attrType.IsKnownType(metadata, KnownAttribute.NativeInteger))
-					{
-						hasNativeIntegersAttribute = true;
-						var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
-						if (ctor.FixedArguments.Length == 1)
-						{
-							var arg = ctor.FixedArguments[0];
-							if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
-								&& values.All(v => v.Value is bool))
-							{
-								nativeIntegersAttributeData = values.SelectArray(v => (bool)v.Value);
-							}
-						}
-					}
-					else if ((options & TypeSystemOptions.Tuple) != 0 && attrType.IsKnownType(metadata, KnownAttribute.TupleElementNames))
-					{
-						var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
-						if (ctor.FixedArguments.Length == 1)
-						{
-							var arg = ctor.FixedArguments[0];
-							if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
-								&& values.All(v => v.Value is string || v.Value == null))
-							{
-								tupleElementNames = values.SelectArray(v => (string)v.Value);
-							}
-						}
-					}
-					else if ((options & TypeSystemOptions.NullabilityAnnotations) != 0 && attrType.IsKnownType(metadata, KnownAttribute.Nullable))
-					{
-						var ctor = attr.DecodeValue(Metadata.MetadataExtensions.minimalCorlibTypeProvider);
-						if (ctor.FixedArguments.Length == 1)
-						{
-							var arg = ctor.FixedArguments[0];
-							if (arg.Value is ImmutableArray<SRM.CustomAttributeTypedArgument<IType>> values
-								&& values.All(v => v.Value is byte b && b <= 2))
-							{
-								nullableAttributeData = values.SelectArray(v => (Nullability)(byte)v.Value);
-							}
-							else if (arg.Value is byte b && b <= 2)
-							{
-								nullability = (Nullability)b;
-							}
-						}
-					}
+					ProcessAttribute(attrHandle);
+				}
+			}
+			if (additionalAttributes != null && (options & relevantOptions) != 0)
+			{
+				// Note: additional attributes will override the values from the normal attributes.
+				foreach (var attrHandle in additionalAttributes.Value)
+				{
+					ProcessAttribute(attrHandle);
 				}
 			}
 			if (hasDynamicAttribute || hasNativeIntegersAttribute || nullability != Nullability.Oblivious || nullableAttributeData != null
@@ -146,6 +162,13 @@ namespace ICSharpCode.Decompiler.TypeSystem
 			{
 				return inputType;
 			}
+		}
+
+		public static IType ApplyAttributesToType(IType inputType, ICompilation compilation, TypeSystemOptions options, PdbExtraTypeInfo pdbExtraTypeInfo)
+		{
+			if (pdbExtraTypeInfo.DynamicFlags is null && pdbExtraTypeInfo.TupleElementNames is null)
+				return inputType;
+			return inputType.AcceptVisitor(new ApplyAttributeTypeVisitor(compilation, pdbExtraTypeInfo.DynamicFlags != null, pdbExtraTypeInfo.DynamicFlags, false, null, options, pdbExtraTypeInfo.TupleElementNames, Nullability.Oblivious, null));
 		}
 
 		readonly ICompilation compilation;
@@ -328,6 +351,7 @@ namespace ICSharpCode.Decompiler.TypeSystem
 					ReferenceKind.Ref => 1,
 					ReferenceKind.Out => 2, // in/out also count the modreq
 					ReferenceKind.In => 2,
+					ReferenceKind.RefReadOnly => 2, // counts the modopt
 					_ => throw new NotSupportedException()
 				};
 				parameters[i] = type.ParameterTypes[i].AcceptVisitor(this);

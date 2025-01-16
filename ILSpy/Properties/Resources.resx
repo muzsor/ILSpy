@@ -186,6 +186,9 @@ Are you sure you want to continue?</value>
   <data name="Checking" xml:space="preserve">
     <value>Checking...</value>
   </data>
+  <data name="ClearAssemblyList" xml:space="preserve">
+    <value>Clear assembly list</value>
+  </data>
   <data name="Close" xml:space="preserve">
     <value>Close</value>
   </data>
@@ -207,6 +210,9 @@ Are you sure you want to continue?</value>
   <data name="Create" xml:space="preserve">
     <value>Create</value>
   </data>
+  <data name="CreatingDiagram" xml:space="preserve">
+    <value>Creating diagram...</value>
+  </data>
   <data name="CultureLabel" xml:space="preserve">
     <value>Culture</value>
   </data>
@@ -221,9 +227,6 @@ Are you sure you want to continue?</value>
   </data>
   <data name="DEBUGDumpPDBAsXML" xml:space="preserve">
     <value>DEBUG -- Dump PDB as XML</value>
-  </data>
-  <data name="DarkMode" xml:space="preserve">
-    <value>Dark Mode</value>
   </data>
   <data name="DebugSteps" xml:space="preserve">
     <value>Debug Steps</value>
@@ -281,6 +284,12 @@ Are you sure you want to continue?</value>
   </data>
   <data name="DecompilerSettings.AsyncEnumerator" xml:space="preserve">
     <value>Decompile async IAsyncEnumerator methods</value>
+  </data>
+  <data name="DecompilerSettings.AutoLoadAssemblyReferences" xml:space="preserve">
+    <value>Automatically load assembly references</value>
+  </data>
+  <data name="DecompilerSettings.CheckedOperators" xml:space="preserve">
+    <value>User-defined checked operators</value>
   </data>
   <data name="DecompilerSettings.DecompileAnonymousMethodsLambdas" xml:space="preserve">
     <value>Decompile anonymous methods/lambdas</value>
@@ -384,9 +393,6 @@ Are you sure you want to continue?</value>
   <data name="DecompilerSettings.IsUnmanagedAttributeOnTypeParametersShouldBeReplacedWithUnmanagedConstraints" xml:space="preserve">
     <value>IsUnmanagedAttribute on type parameters should be replaced with 'unmanaged' constraints</value>
   </data>
-  <data name="DecompilerSettings.LifetimeAnnotations" xml:space="preserve">
-    <value>'scoped' lifetime annotation</value>
-  </data>
   <data name="DecompilerSettings.NativeIntegers" xml:space="preserve">
     <value>Use nint/nuint types</value>
   </data>
@@ -396,14 +402,17 @@ Are you sure you want to continue?</value>
   <data name="DecompilerSettings.NullableReferenceTypes" xml:space="preserve">
     <value>Nullable reference types</value>
   </data>
+  <data name="DecompilerSettings.NumericIntPtr" xml:space="preserve">
+    <value>Treat (U)IntPtr as n(u)int</value>
+  </data>
   <data name="DecompilerSettings.ObjectCollectionInitializerExpressions" xml:space="preserve">
     <value>Object/collection initializer expressions</value>
   </data>
   <data name="DecompilerSettings.Other" xml:space="preserve">
     <value>Other</value>
   </data>
-  <data name="DecompilerSettings.ParameterNullCheck" xml:space="preserve">
-    <value>Use parameter null checking</value>
+  <data name="DecompilerSettings.PatternCombinators" xml:space="preserve">
+    <value>Pattern combinators (and, or, not)</value>
   </data>
   <data name="DecompilerSettings.PatternMatching" xml:space="preserve">
     <value>Use pattern matching expressions</value>
@@ -423,6 +432,15 @@ Are you sure you want to continue?</value>
   <data name="DecompilerSettings.RecordStructs" xml:space="preserve">
     <value>Record structs</value>
   </data>
+  <data name="DecompilerSettings.RecursivePatternMatching" xml:space="preserve">
+    <value>Recursive pattern matching</value>
+  </data>
+  <data name="DecompilerSettings.RefReadOnlyParameters" xml:space="preserve">
+    <value>'ref readonly' parameters</value>
+  </data>
+  <data name="DecompilerSettings.RelationalPatterns" xml:space="preserve">
+    <value>Relational patterns</value>
+  </data>
   <data name="DecompilerSettings.RemoveDeadAndSideEffectFreeCodeUseWithCaution" xml:space="preserve">
     <value>Remove dead and side effect free code (use with caution!)</value>
   </data>
@@ -434,6 +452,9 @@ Are you sure you want to continue?</value>
   </data>
   <data name="DecompilerSettings.RequiredMembers" xml:space="preserve">
     <value>Required members</value>
+  </data>
+  <data name="DecompilerSettings.ScopedRef" xml:space="preserve">
+    <value>'scoped' lifetime annotation</value>
   </data>
   <data name="DecompilerSettings.SeparateLocalVariableDeclarations" xml:space="preserve">
     <value>Separate local variable declarations and initializers (int x = 5; -&gt; int x; x = 5;), if possible</value>
@@ -449,6 +470,12 @@ Are you sure you want to continue?</value>
   </data>
   <data name="DecompilerSettings.SwitchExpressions" xml:space="preserve">
     <value>Switch expressions</value>
+  </data>
+  <data name="DecompilerSettings.SwitchOnReadOnlySpanChar" xml:space="preserve">
+    <value>Use switch on (ReadOnly)Span&lt;char&gt;</value>
+  </data>
+  <data name="DecompilerSettings.UnsignedRightShift" xml:space="preserve">
+    <value>Unsigned right shift (&gt;&gt;&gt;)</value>
   </data>
   <data name="DecompilerSettings.UseDiscards" xml:space="preserve">
     <value>Use discards</value>
@@ -492,6 +519,9 @@ Are you sure you want to continue?</value>
   <data name="DecompilerSettings.UsePatternBasedFixedStatement" xml:space="preserve">
     <value>Use pattern-based fixed statement</value>
   </data>
+  <data name="DecompilerSettings.UsePrimaryConstructorDecompilerSettings.SyntaxForNonRecordTypes" xml:space="preserve">
+    <value>Use primary constructor syntax for non-record types</value>
+  </data>
   <data name="DecompilerSettings.UsePrimaryConstructorSyntax" xml:space="preserve">
     <value>Use primary constructor  syntax with records</value>
   </data>
@@ -515,6 +545,9 @@ Are you sure you want to continue?</value>
   </data>
   <data name="DecompilerSettings.UseVariableNamesFromDebugSymbolsIfAvailable" xml:space="preserve">
     <value>Use variable names from debug symbols, if available</value>
+  </data>
+  <data name="DecompilerSettings.Utf8StringLiterals" xml:space="preserve">
+    <value>UTF-8 string literals</value>
   </data>
   <data name="DecompilerSettings.VBSpecificOptions" xml:space="preserve">
     <value>VB-specific options</value>
@@ -542,6 +575,9 @@ Are you sure you want to continue?</value>
   </data>
   <data name="DisplaySettingsPanel_Font" xml:space="preserve">
     <value>Font:</value>
+  </data>
+  <data name="DisplaySettingsPanel_Theme" xml:space="preserve">
+    <value>Theme:</value>
   </data>
   <data name="Download" xml:space="preserve">
     <value>Download</value>
@@ -644,6 +680,9 @@ Are you sure you want to continue?</value>
   </data>
   <data name="ManageAssembly_Lists" xml:space="preserve">
     <value>Manage assembly _lists...</value>
+  </data>
+  <data name="Metadata" xml:space="preserve">
+    <value>Metadata</value>
   </data>
   <data name="Misc" xml:space="preserve">
     <value>Misc</value>
@@ -907,6 +946,9 @@ Do you want to continue?</value>
   <data name="TabSize" xml:space="preserve">
     <value>Tab size:</value>
   </data>
+  <data name="Theme" xml:space="preserve">
+    <value>Theme</value>
+  </data>
   <data name="ToggleFolding" xml:space="preserve">
     <value>Toggle All Folding</value>
   </data>
@@ -996,6 +1038,9 @@ Do you want to continue?</value>
   </data>
   <data name="_CollapseTreeNodes" xml:space="preserve">
     <value>_Collapse all tree nodes</value>
+  </data>
+  <data name="_CreateDiagram" xml:space="preserve">
+    <value>Create _Diagram...</value>
   </data>
   <data name="_File" xml:space="preserve">
     <value>_File</value>

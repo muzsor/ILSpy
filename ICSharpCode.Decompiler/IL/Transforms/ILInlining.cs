@@ -244,7 +244,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				var loadInst = r.LoadInst;
 				if (loadInst.OpCode == OpCode.LdLoca)
 				{
-					if (!IsGeneratedValueTypeTemporary((LdLoca)loadInst, v, inlinedExpression, options))
+					if (!IsGeneratedTemporaryForAddressOf((LdLoca)loadInst, v, inlinedExpression, options))
 						return false;
 				}
 				else
@@ -289,7 +289,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 		/// </summary>
 		/// <param name="loadInst">The load instruction (a descendant within 'next')</param>
 		/// <param name="v">The variable being inlined.</param>
-		static bool IsGeneratedValueTypeTemporary(LdLoca loadInst, ILVariable v, ILInstruction inlinedExpression, InliningOptions options)
+		static bool IsGeneratedTemporaryForAddressOf(LdLoca loadInst, ILVariable v, ILInstruction inlinedExpression, InliningOptions options)
 		{
 			Debug.Assert(loadInst.Variable == v);
 			if (!options.HasFlag(InliningOptions.AllowInliningOfLdloca))
@@ -301,7 +301,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			// Thus, we have to ensure we're operating on an r-value.
 			// Additionally, we cannot inline in cases where the C# compiler prohibits the direct use
 			// of the rvalue (e.g. M(ref (MyStruct)obj); is invalid).
-			if (IsUsedAsThisPointerInCall(loadInst, out var method))
+			if (IsUsedAsThisPointerInCall(loadInst, out var method, out var constrainedTo))
 			{
 				if (options.HasFlag(InliningOptions.Aggressive))
 				{
@@ -321,7 +321,40 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					case ExpressionClassification.ReadonlyLValue:
 						// For struct method calls on readonly lvalues, the C# compiler
 						// only generates a temporary if it isn't a "readonly struct"
-						return MethodRequiresCopyForReadonlyLValue(method);
+						return MethodRequiresCopyForReadonlyLValue(method, constrainedTo);
+					default:
+						throw new InvalidOperationException("invalid expression classification");
+				}
+			}
+			else if (IsPassedToReadOnlySpanOfCharCtor(loadInst))
+			{
+				// Always inlining is possible here, because it's an 'in' or 'ref readonly' parameter
+				// and the C# compiler allows calling it with an rvalue, even though that might produce
+				// a warning. Note that we don't need to check the expression classification, because
+				// expressionBuilder.VisitAddressOf will handle creating the copy for us.
+				// This is necessary, because there are compiler-generated uses of this ctor when
+				// concatenating a string to a char and our following transforms assume the char is
+				// already inlined.
+				return true;
+			}
+			else if (IsPassedToInParameter(loadInst))
+			{
+				if (options.HasFlag(InliningOptions.Aggressive))
+				{
+					// Inlining might be required in ctor initializers (see #2714).
+					// expressionBuilder.VisitAddressOf will handle creating the copy for us.
+					return true;
+				}
+
+				switch (ClassifyExpression(inlinedExpression))
+				{
+					case ExpressionClassification.RValue:
+						// For rvalues passed to in parameters, the C# compiler generates a temporary.
+						return true;
+					case ExpressionClassification.MutableLValue:
+					case ExpressionClassification.ReadonlyLValue:
+						// For lvalues passed to in parameters, the C# compiler never generates temporaries.
+						return false;
 					default:
 						throw new InvalidOperationException("invalid expression classification");
 				}
@@ -337,11 +370,11 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			}
 		}
 
-		internal static bool MethodRequiresCopyForReadonlyLValue(IMethod method)
+		internal static bool MethodRequiresCopyForReadonlyLValue(IMethod method, IType constrainedTo = null)
 		{
 			if (method == null)
 				return true;
-			var type = method.DeclaringType;
+			var type = constrainedTo ?? method.DeclaringType;
 			if (type.IsReferenceType == true)
 				return false; // reference types are never implicitly copied
 			if (method.ThisIsRefReadOnly)
@@ -351,12 +384,13 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 
 		internal static bool IsUsedAsThisPointerInCall(LdLoca ldloca)
 		{
-			return IsUsedAsThisPointerInCall(ldloca, out _);
+			return IsUsedAsThisPointerInCall(ldloca, out _, out _);
 		}
 
-		static bool IsUsedAsThisPointerInCall(LdLoca ldloca, out IMethod method)
+		static bool IsUsedAsThisPointerInCall(LdLoca ldloca, out IMethod method, out IType constrainedType)
 		{
 			method = null;
+			constrainedType = null;
 			if (ldloca.Variable.Type.IsReferenceType ?? false)
 				return false;
 			ILInstruction inst = ldloca;
@@ -370,7 +404,9 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			{
 				case OpCode.Call:
 				case OpCode.CallVirt:
-					method = ((CallInstruction)inst.Parent).Method;
+					var callInst = (CallInstruction)inst.Parent;
+					method = callInst.Method;
+					constrainedType = callInst.ConstrainedTo;
 					if (method.IsAccessor)
 					{
 						if (method.AccessorKind == MethodSemanticsAttributes.Getter)
@@ -410,6 +446,34 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				inst = ldflda;
 			}
 			return inst != ldloca && inst.Parent is LdObj;
+		}
+
+		static bool IsPassedToInParameter(LdLoca ldloca)
+		{
+			if (ldloca.Parent is not CallInstruction call)
+			{
+				return false;
+			}
+			return call.GetParameter(ldloca.ChildIndex)?.ReferenceKind is ReferenceKind.In;
+		}
+
+		static bool IsPassedToReadOnlySpanOfCharCtor(LdLoca ldloca)
+		{
+			if (ldloca.Parent is not NewObj call)
+			{
+				return false;
+			}
+			return IsReadOnlySpanCharCtor(call.Method);
+		}
+
+		internal static bool IsReadOnlySpanCharCtor(IMethod method)
+		{
+			return method.IsConstructor
+				&& method.Parameters.Count == 1
+				&& method.DeclaringType.IsKnownType(KnownTypeCode.ReadOnlySpanOfT)
+				&& method.DeclaringType.TypeArguments[0].IsKnownType(KnownTypeCode.Char)
+				&& method.Parameters[0].Type is ByReferenceType brt
+				&& brt.ElementType.IsKnownType(KnownTypeCode.Char);
 		}
 
 		/// <summary>
@@ -473,6 +537,9 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			}
 		}
 
+		/// <summary>
+		/// Gets whether the ILInstruction will turn into a C# expresion that is considered readonly by the C# compiler.
+		/// </summary>
 		internal static bool IsReadonlyReference(ILInstruction addr)
 		{
 			switch (addr)
@@ -494,6 +561,8 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					// C# doesn't allow mutation of value-type temporaries
 					return true;
 				default:
+					if (addr.MatchLdFld(out _, out var field))
+						return field.ReturnTypeIsRefReadOnly;
 					return false;
 			}
 		}

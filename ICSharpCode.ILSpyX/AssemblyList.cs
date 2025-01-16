@@ -23,7 +23,6 @@ using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -31,6 +30,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 
 using ICSharpCode.ILSpyX.Extensions;
+using ICSharpCode.ILSpyX.FileLoaders;
 
 namespace ICSharpCode.ILSpyX
 {
@@ -129,6 +129,7 @@ namespace ICSharpCode.ILSpyX
 
 		public bool ApplyWinRTProjections { get; set; }
 		public bool UseDebugSymbols { get; set; }
+		public FileLoaderRegistry LoaderRegistry => this.manager.LoaderRegistry;
 
 		/// <summary>
 		/// Gets the loaded assemblies. This method is thread-safe.
@@ -185,7 +186,7 @@ namespace ICSharpCode.ILSpyX
 			get { return listName; }
 		}
 
-		internal void Move(LoadedAssembly[] assembliesToMove, int index)
+		public void Move(LoadedAssembly[] assembliesToMove, int index)
 		{
 			VerifyAccess();
 			lock (lockObj)
@@ -229,7 +230,7 @@ namespace ICSharpCode.ILSpyX
 			}
 		}
 
-		internal void RefreshSave()
+		public void RefreshSave()
 		{
 			// Whenever the assembly list is modified, mark it as dirty
 			// and enqueue a task that saves it once the UI has finished modifying the assembly list.
@@ -280,8 +281,9 @@ namespace ICSharpCode.ILSpyX
 		{
 			file = Path.GetFullPath(file);
 			return OpenAssembly(file, () => {
-				var newAsm = new LoadedAssembly(this, file, applyWinRTProjections: ApplyWinRTProjections, useDebugSymbols: UseDebugSymbols);
-				newAsm.IsAutoLoaded = isAutoLoaded;
+				var newAsm = new LoadedAssembly(this, file, fileLoaders: manager?.LoaderRegistry, applyWinRTProjections: ApplyWinRTProjections, useDebugSymbols: UseDebugSymbols) {
+					IsAutoLoaded = isAutoLoaded
+				};
 				return newAsm;
 			});
 		}
@@ -294,6 +296,7 @@ namespace ICSharpCode.ILSpyX
 			file = Path.GetFullPath(file);
 			return OpenAssembly(file, () => {
 				var newAsm = new LoadedAssembly(this, file, stream: Task.FromResult(stream),
+					fileLoaders: manager?.LoaderRegistry,
 					applyWinRTProjections: ApplyWinRTProjections, useDebugSymbols: UseDebugSymbols);
 				newAsm.IsAutoLoaded = isAutoLoaded;
 				return newAsm;
@@ -346,6 +349,7 @@ namespace ICSharpCode.ILSpyX
 					return null;
 
 				var newAsm = new LoadedAssembly(this, file, stream: Task.FromResult<Stream?>(stream),
+					fileLoaders: manager?.LoaderRegistry,
 					applyWinRTProjections: ApplyWinRTProjections, useDebugSymbols: UseDebugSymbols);
 				newAsm.IsAutoLoaded = target.IsAutoLoaded;
 
@@ -375,6 +379,7 @@ namespace ICSharpCode.ILSpyX
 			if (index < 0)
 				return null;
 			var newAsm = new LoadedAssembly(this, target.FileName, pdbFileName: target.PdbFileName,
+				fileLoaders: manager?.LoaderRegistry,
 				applyWinRTProjections: ApplyWinRTProjections, useDebugSymbols: UseDebugSymbols);
 			newAsm.IsAutoLoaded = target.IsAutoLoaded;
 			lock (lockObj)
@@ -395,6 +400,16 @@ namespace ICSharpCode.ILSpyX
 			}
 		}
 
+		public void Clear()
+		{
+			VerifyAccess();
+			lock (lockObj)
+			{
+				dirty = true;
+				assemblies.Clear();
+				byFilename.Clear();
+			}
+		}
 		public void Sort(IComparer<LoadedAssembly> comparer)
 		{
 			Sort(0, int.MaxValue, comparer);

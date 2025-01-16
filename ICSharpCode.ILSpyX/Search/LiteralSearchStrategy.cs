@@ -28,8 +28,6 @@ using ICSharpCode.Decompiler.TypeSystem;
 using ICSharpCode.Decompiler.Util;
 using ICSharpCode.ILSpyX.Abstractions;
 
-using static System.Reflection.Metadata.PEReaderExtensions;
-
 using ILOpCode = System.Reflection.Metadata.ILOpCode;
 
 namespace ICSharpCode.ILSpyX.Search
@@ -48,8 +46,9 @@ namespace ICSharpCode.ILSpyX.Search
 			{
 				var lexer = new Lexer(new LATextReader(new System.IO.StringReader(terms[0])));
 				var value = lexer.NextToken();
+				var following = lexer.NextToken();
 
-				if (value != null && value.LiteralValue != null)
+				if (value != null && value.LiteralValue != null && following != null && following.TokenKind == TokenKind.EOF)
 				{
 					TypeCode valueType = Type.GetTypeCode(value.LiteralValue.GetType());
 					switch (valueType)
@@ -74,9 +73,10 @@ namespace ICSharpCode.ILSpyX.Search
 					}
 				}
 			}
+			// Note: if searchTermLiteralType remains TypeCode.Empty, we'll do a substring search via base.IsMatch
 		}
 
-		public override void Search(PEFile module, CancellationToken cancellationToken)
+		public override void Search(MetadataFile module, CancellationToken cancellationToken)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			var metadata = module.Metadata;
@@ -141,9 +141,9 @@ namespace ICSharpCode.ILSpyX.Search
 			}
 		}
 
-		bool MethodIsLiteralMatch(PEFile module, MethodDefinition methodDefinition)
+		bool MethodIsLiteralMatch(MetadataFile module, MethodDefinition methodDefinition)
 		{
-			var blob = module.Reader.GetMethodBody(methodDefinition.RelativeVirtualAddress).GetILReader();
+			var blob = module.GetMethodBody(methodDefinition.RelativeVirtualAddress).GetILReader();
 			if (searchTermLiteralType == TypeCode.Int64)
 			{
 				Debug.Assert(searchTermLiteralValue != null);

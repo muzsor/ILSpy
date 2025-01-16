@@ -16,19 +16,12 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows;
 
-using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
-using ICSharpCode.Decompiler.TypeSystem.Implementation;
-using ICSharpCode.ILSpy.Analyzers;
-using ICSharpCode.ILSpy.Analyzers.Builtin;
 using ICSharpCode.ILSpyX;
+using ICSharpCode.ILSpyX.Analyzers;
+using ICSharpCode.ILSpyX.Analyzers.Builtin;
 
 using NUnit.Framework;
 
@@ -47,7 +40,7 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 		{
 			assemblyList = new AssemblyList();
 			testAssembly = assemblyList.OpenAssembly(typeof(MethodUsesAnalyzerTests).Assembly.Location);
-			testAssemblyTypeSystem = new DecompilerTypeSystem(testAssembly.GetPEFileOrNull(), testAssembly.GetAssemblyResolver());
+			testAssemblyTypeSystem = new DecompilerTypeSystem(testAssembly.GetMetadataFileOrNull(), testAssembly.GetAssemblyResolver());
 			language = new CSharpLanguage();
 		}
 
@@ -59,10 +52,10 @@ namespace ICSharpCode.ILSpy.Tests.Analyzers
 
 			var results = new TypeUsedByAnalyzer().Analyze(symbol, context).ToList();
 
-			Assert.IsNotEmpty(results);
+			Assert.That(results, Is.Not.Empty);
 			var method = results.OfType<IMethod>().SingleOrDefault(m => m.FullName == "ICSharpCode.ILSpy.Tests.Analyzers.TestCases.Main.MainAssembly.UsesInt32");
-			Assert.IsNotNull(method);
-			Assert.IsFalse(method.MetadataToken.IsNil);
+			Assert.That(method, Is.Not.Null);
+			Assert.That(!method.MetadataToken.IsNil);
 		}
 	}
 }

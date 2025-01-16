@@ -826,6 +826,7 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 					break;
 				case BinaryOperatorType.ShiftLeft:
 				case BinaryOperatorType.ShiftRight:
+				case BinaryOperatorType.UnsignedShiftRight:
 					spacePolicy = policy.SpaceAroundShiftOperator;
 					break;
 				case BinaryOperatorType.NullCoalescing:
@@ -947,6 +948,40 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 			EndNode(declarationExpression);
 		}
 
+		public virtual void VisitRecursivePatternExpression(RecursivePatternExpression recursivePatternExpression)
+		{
+			StartNode(recursivePatternExpression);
+
+			recursivePatternExpression.Type.AcceptVisitor(this);
+			Space();
+			if (recursivePatternExpression.IsPositional)
+			{
+				WriteToken(Roles.LPar);
+			}
+			else
+			{
+				WriteToken(Roles.LBrace);
+			}
+			Space();
+			WriteCommaSeparatedList(recursivePatternExpression.SubPatterns);
+			Space();
+			if (recursivePatternExpression.IsPositional)
+			{
+				WriteToken(Roles.RPar);
+			}
+			else
+			{
+				WriteToken(Roles.RBrace);
+			}
+			if (!recursivePatternExpression.Designation.IsNull)
+			{
+				Space();
+				recursivePatternExpression.Designation.AcceptVisitor(this);
+			}
+
+			EndNode(recursivePatternExpression);
+		}
+
 		public virtual void VisitOutVarDeclarationExpression(OutVarDeclarationExpression outVarDeclarationExpression)
 		{
 			StartNode(outVarDeclarationExpression);
@@ -1042,7 +1077,7 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 				return true;
 			}
 			var p = lambdaExpression.Parameters.Single();
-			return !(p.Type.IsNull && p.ParameterModifier == ParameterModifier.None);
+			return !(p.Type.IsNull && p.ParameterModifier == ReferenceKind.None && !p.IsParams);
 		}
 
 		public virtual void VisitMemberReferenceExpression(MemberReferenceExpression memberReferenceExpression)
@@ -1267,7 +1302,7 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 			StartNode(unaryOperatorExpression);
 			UnaryOperatorType opType = unaryOperatorExpression.Operator;
 			var opSymbol = UnaryOperatorExpression.GetOperatorRole(opType);
-			if (opType == UnaryOperatorType.Await)
+			if (opType is UnaryOperatorType.Await or UnaryOperatorType.PatternNot)
 			{
 				WriteKeyword(opSymbol);
 				Space();
@@ -2527,7 +2562,7 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 			StartNode(operatorDeclaration);
 			WriteAttributes(operatorDeclaration.Attributes);
 			WriteModifiers(operatorDeclaration.ModifierTokens);
-			if (operatorDeclaration.OperatorType == OperatorType.Explicit)
+			if (operatorDeclaration.OperatorType == OperatorType.Explicit || operatorDeclaration.OperatorType == OperatorType.CheckedExplicit)
 			{
 				WriteKeyword(OperatorDeclaration.ExplicitRole);
 			}
@@ -2539,9 +2574,17 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 			{
 				operatorDeclaration.ReturnType.AcceptVisitor(this);
 			}
+			Space();
+			WritePrivateImplementationType(operatorDeclaration.PrivateImplementationType);
 			WriteKeyword(OperatorDeclaration.OperatorKeywordRole);
 			Space();
+			if (OperatorDeclaration.IsChecked(operatorDeclaration.OperatorType))
+			{
+				WriteKeyword(OperatorDeclaration.CheckedKeywordRole);
+				Space();
+			}
 			if (operatorDeclaration.OperatorType == OperatorType.Explicit
+				|| operatorDeclaration.OperatorType == OperatorType.CheckedExplicit
 				|| operatorDeclaration.OperatorType == OperatorType.Implicit)
 			{
 				operatorDeclaration.ReturnType.AcceptVisitor(this);
@@ -2565,34 +2608,35 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 				WriteKeyword(ParameterDeclaration.ThisModifierRole);
 				Space();
 			}
-			if (parameterDeclaration.IsRefScoped)
+			if (parameterDeclaration.IsParams)
 			{
-				WriteKeyword(ParameterDeclaration.RefScopedRole);
+				WriteKeyword(ParameterDeclaration.ParamsModifierRole);
+				Space();
+			}
+			if (parameterDeclaration.IsScopedRef)
+			{
+				WriteKeyword(ParameterDeclaration.ScopedRefRole);
 				Space();
 			}
 			switch (parameterDeclaration.ParameterModifier)
 			{
-				case ParameterModifier.Ref:
+				case ReferenceKind.Ref:
 					WriteKeyword(ParameterDeclaration.RefModifierRole);
 					Space();
 					break;
-				case ParameterModifier.Out:
+				case ReferenceKind.RefReadOnly:
+					WriteKeyword(ParameterDeclaration.RefModifierRole);
+					WriteKeyword(ParameterDeclaration.ReadonlyModifierRole);
+					Space();
+					break;
+				case ReferenceKind.Out:
 					WriteKeyword(ParameterDeclaration.OutModifierRole);
 					Space();
 					break;
-				case ParameterModifier.Params:
-					WriteKeyword(ParameterDeclaration.ParamsModifierRole);
-					Space();
-					break;
-				case ParameterModifier.In:
+				case ReferenceKind.In:
 					WriteKeyword(ParameterDeclaration.InModifierRole);
 					Space();
 					break;
-			}
-			if (parameterDeclaration.IsValueScoped)
-			{
-				WriteKeyword(ParameterDeclaration.ValueScopedRole);
-				Space();
 			}
 			parameterDeclaration.Type.AcceptVisitor(this);
 			if (!parameterDeclaration.Type.IsNull && !string.IsNullOrEmpty(parameterDeclaration.Name))
@@ -2602,10 +2646,6 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 			if (!string.IsNullOrEmpty(parameterDeclaration.Name))
 			{
 				WriteIdentifier(parameterDeclaration.NameToken);
-			}
-			if (parameterDeclaration.HasNullCheck)
-			{
-				WriteToken(Roles.DoubleExclamation);
 			}
 			if (!parameterDeclaration.DefaultExpression.IsNull)
 			{
@@ -2654,7 +2694,11 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 					propertyDeclaration.Initializer.AcceptVisitor(this);
 					Semicolon();
 				}
-				NewLine();
+				else
+				{
+					// The call to Semicolon() above prints a newline too
+					NewLine();
+				}
 			}
 			else
 			{
@@ -3086,7 +3130,7 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 					break;
 				case SymbolKind.Operator:
 					var opType = documentationReference.OperatorType;
-					if (opType == OperatorType.Explicit)
+					if (opType == OperatorType.Explicit || opType == OperatorType.CheckedExplicit)
 					{
 						WriteKeyword(OperatorDeclaration.ExplicitRole);
 					}
@@ -3096,7 +3140,12 @@ namespace ICSharpCode.Decompiler.CSharp.OutputVisitor
 					}
 					WriteKeyword(OperatorDeclaration.OperatorKeywordRole);
 					Space();
-					if (opType == OperatorType.Explicit || opType == OperatorType.Implicit)
+					if (OperatorDeclaration.IsChecked(opType))
+					{
+						WriteKeyword(OperatorDeclaration.CheckedKeywordRole);
+						Space();
+					}
+					if (opType == OperatorType.Explicit || opType == OperatorType.Implicit || opType == OperatorType.CheckedExplicit)
 					{
 						documentationReference.ConversionOperatorReturnType.AcceptVisitor(this);
 					}

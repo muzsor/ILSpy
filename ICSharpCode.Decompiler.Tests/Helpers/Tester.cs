@@ -105,12 +105,19 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 			TesterPath = Path.GetDirectoryName(typeof(Tester).Assembly.Location);
 			TestCasePath = Path.Combine(TesterPath, "../../../../TestCases");
 #if DEBUG
-			testRunnerBasePath = Path.Combine(TesterPath, "../../../../../ICSharpCode.Decompiler.TestRunner/bin/Debug/net6.0-windows");
+			testRunnerBasePath = Path.Combine(TesterPath, "../../../../../ICSharpCode.Decompiler.TestRunner/bin/Debug/net8.0");
 #else
-			testRunnerBasePath = Path.Combine(TesterPath, "../../../../../ICSharpCode.Decompiler.TestRunner/bin/Release/net6.0-windows");
+			testRunnerBasePath = Path.Combine(TesterPath, "../../../../../ICSharpCode.Decompiler.TestRunner/bin/Release/net8.0");
 #endif
-			packagesPropsFile = Path.Combine(TesterPath, "../../../../../packages.props");
-			roslynLatestVersion = XDocument.Load(packagesPropsFile).XPathSelectElement("//RoslynVersion").Value;
+			// To parse: <Project><ItemGroup><PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0-3.final" />
+			packagesPropsFile = Path.Combine(TesterPath, "../../../../../Directory.Packages.props");
+			roslynLatestVersion = ((IEnumerable<object>)(XDocument
+				.Load(packagesPropsFile)
+				.XPathEvaluate("//Project//ItemGroup//PackageVersion[@Include='Microsoft.CodeAnalysis.CSharp']/@Version")))
+				.OfType<XAttribute>()
+				.Single()
+				.Value;
+
 			roslynToolset = new RoslynToolset();
 			vswhereToolset = new VsWhereToolset();
 		}
@@ -191,7 +198,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 			{
 				Console.WriteLine("errors:" + Environment.NewLine + result.StandardError);
 			}
-			Assert.AreEqual(0, result.ExitCode, "ilasm failed");
+			Assert.That(result.ExitCode, Is.EqualTo(0), "ilasm failed");
 
 			return outputFile;
 		}
@@ -244,7 +251,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 			{
 				Console.WriteLine("errors:" + Environment.NewLine + result.StandardError);
 			}
-			Assert.AreEqual(0, result.ExitCode, "ildasm failed");
+			Assert.That(result.ExitCode, Is.EqualTo(0), "ildasm failed");
 
 			// Unlike the .imagebase directive (which is a fixed value when compiling with /deterministic),
 			// the image base comment still varies... ildasm putting a random number here?
@@ -270,8 +277,8 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 		}
 
 		static readonly string coreRefAsmPath = new DotNetCorePathFinder(TargetFrameworkIdentifier.NET,
-			new Version(6, 0), "Microsoft.NETCore.App")
-				.GetReferenceAssemblyPath(".NETCoreApp,Version=v6.0");
+			new Version(8, 0), "Microsoft.NETCore.App")
+				.GetReferenceAssemblyPath(".NETCoreApp,Version=v8.0");
 
 		public static readonly string RefAsmPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
 			@"Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2");
@@ -295,6 +302,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 				"System.Linq.Expressions.dll",
 				"System.Linq.Queryable.dll",
 				"System.IO.FileSystem.Watcher.dll",
+				"System.Memory.dll",
 				"System.Threading.dll",
 				"System.Threading.Thread.dll",
 				"System.Runtime.dll",
@@ -308,7 +316,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 
 		const string targetFrameworkAttributeSnippet = @"
 
-[assembly: System.Runtime.Versioning.TargetFramework("".NETCoreApp,Version=v6.0"", FrameworkDisplayName = """")]
+[assembly: System.Runtime.Versioning.TargetFramework("".NETCoreApp,Version=v8.0"", FrameworkDisplayName = """")]
 
 ";
 
@@ -343,6 +351,8 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 				{
 					preprocessorSymbols.Add("NETCORE");
 					preprocessorSymbols.Add("NET60");
+					preprocessorSymbols.Add("NET70");
+					preprocessorSymbols.Add("NET80");
 				}
 				preprocessorSymbols.Add("ROSLYN");
 				preprocessorSymbols.Add("CS60");
@@ -372,6 +382,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 					preprocessorSymbols.Add("ROSLYN4");
 					preprocessorSymbols.Add("CS100");
 					preprocessorSymbols.Add("CS110");
+					preprocessorSymbols.Add("CS120");
 				}
 			}
 			else if ((flags & CompilerOptions.UseMcsMask) != 0)
@@ -509,7 +520,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 					Console.WriteLine("errors:" + Environment.NewLine + result.StandardError);
 				}
 
-				Assert.AreEqual(0, result.ExitCode, "csc failed");
+				Assert.That(result.ExitCode, Is.EqualTo(0), "csc failed");
 
 				return results;
 			}
@@ -517,7 +528,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 			{
 				CompilerResults results = new CompilerResults();
 				results.PathToAssembly = outputFileName;
-				string testBasePath = RoundtripAssembly.TestDir;
+				string testBasePath = Roundtrip.RoundtripAssembly.TestDir;
 				if (!Directory.Exists(testBasePath))
 				{
 					Assert.Ignore($"Compilation with mcs ignored: test directory '{testBasePath}' needs to be checked out separately." + Environment.NewLine +
@@ -571,7 +582,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 				{
 					Console.WriteLine("errors:" + Environment.NewLine + result.StandardError);
 				}
-				Assert.AreEqual(0, result.ExitCode, "mcs failed");
+				Assert.That(result.ExitCode, Is.EqualTo(0), "mcs failed");
 
 				return results;
 			}
@@ -585,7 +596,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 					CompilerOptions.UseRoslyn1_3_2 => CSharp.LanguageVersion.CSharp6,
 					CompilerOptions.UseRoslyn2_10_0 => CSharp.LanguageVersion.CSharp7_3,
 					CompilerOptions.UseRoslyn3_11_0 => CSharp.LanguageVersion.CSharp9_0,
-					_ => cscOptions.HasFlag(CompilerOptions.Preview) ? CSharp.LanguageVersion.Latest : CSharp.LanguageVersion.CSharp11_0,
+					_ => cscOptions.HasFlag(CompilerOptions.Preview) ? CSharp.LanguageVersion.Latest : CSharp.LanguageVersion.CSharp12_0,
 				};
 				DecompilerSettings settings = new(langVersion) {
 					// Never use file-scoped namespaces
@@ -753,8 +764,8 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 				(result2, output2, error2) = await Run(decompiledOutputFile).ConfigureAwait(false);
 			}
 
-			Assert.AreEqual(0, result1, "Exit code != 0; did the test case crash?" + Environment.NewLine + error1);
-			Assert.AreEqual(0, result2, "Exit code != 0; did the decompiled code crash?" + Environment.NewLine + error2);
+			Assert.That(result1, Is.EqualTo(0), "Exit code != 0; did the test case crash?" + Environment.NewLine + error1);
+			Assert.That(result2, Is.EqualTo(0), "Exit code != 0; did the decompiled code crash?" + Environment.NewLine + error2);
 
 			if (output1 != output2 || error1 != error2)
 			{
@@ -840,7 +851,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 				.WithValidation(CommandResultValidation.None);
 
 			var result = await command.ExecuteBufferedAsync().ConfigureAwait(false);
-			Assert.AreEqual(0, result.ExitCode, "sn failed");
+			Assert.That(result.ExitCode, Is.EqualTo(0), "sn failed");
 
 			if (!string.IsNullOrWhiteSpace(result.StandardOutput))
 			{
@@ -875,7 +886,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 			get {
 				if (pathToAssembly == null)
 				{
-					pathToAssembly = Path.GetTempFileName();
+					pathToAssembly = TestsAssemblyOutput.GetTempFileName();
 					tempFiles.Add(pathToAssembly);
 				}
 				return pathToAssembly;

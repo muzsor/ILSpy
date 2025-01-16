@@ -46,7 +46,7 @@ namespace ICSharpCode.Decompiler.Tests
 					|| file.Extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
 				{
 					var testName = file.Name.Split('.')[0];
-					Assert.Contains(testName, testNames);
+					Assert.That(testNames, Has.Member(testName));
 				}
 			}
 		}
@@ -313,6 +313,12 @@ namespace ICSharpCode.Decompiler.Tests
 		}
 
 		[Test]
+		public async Task Operators([ValueSource(nameof(defaultOptions))] CompilerOptions cscOptions)
+		{
+			await RunForLibrary(cscOptions: cscOptions);
+		}
+
+		[Test]
 		public async Task Generics([ValueSource(nameof(defaultOptions))] CompilerOptions cscOptions)
 		{
 			await RunForLibrary(cscOptions: cscOptions);
@@ -321,12 +327,11 @@ namespace ICSharpCode.Decompiler.Tests
 		[Test]
 		public async Task Loops([ValueSource(nameof(defaultOptionsWithMcs))] CompilerOptions cscOptions)
 		{
-			await RunForLibrary(cscOptions: cscOptions, decompilerSettings: new DecompilerSettings {
-				// legacy csc generates a dead store in debug builds
-				RemoveDeadStores = (cscOptions == CompilerOptions.None),
-				UseExpressionBodyForCalculatedGetterOnlyProperties = false,
-				FileScopedNamespaces = false,
-			});
+			DecompilerSettings settings = Tester.GetSettings(cscOptions);
+			// legacy csc generates a dead store in debug builds
+			settings.RemoveDeadStores = (cscOptions == CompilerOptions.None);
+			settings.UseExpressionBodyForCalculatedGetterOnlyProperties = false;
+			await RunForLibrary(cscOptions: cscOptions, decompilerSettings: settings);
 		}
 
 		[Test]
@@ -486,7 +491,7 @@ namespace ICSharpCode.Decompiler.Tests
 		}
 
 		[Test]
-		public async Task NativeInts([ValueSource(nameof(roslyn3OrNewerOptions))] CompilerOptions cscOptions)
+		public async Task NativeInts([ValueSource(nameof(roslyn3OrNewerWithNet40Options))] CompilerOptions cscOptions)
 		{
 			await RunForLibrary(cscOptions: cscOptions);
 		}
@@ -535,6 +540,12 @@ namespace ICSharpCode.Decompiler.Tests
 
 		[Test]
 		public async Task RefLocalsAndReturns([ValueSource(nameof(roslyn2OrNewerOptions))] CompilerOptions cscOptions)
+		{
+			await RunForLibrary(cscOptions: cscOptions);
+		}
+
+		[Test]
+		public async Task RefFields([ValueSource(nameof(roslyn4OrNewerOptions))] CompilerOptions cscOptions)
 		{
 			await RunForLibrary(cscOptions: cscOptions);
 		}
@@ -703,7 +714,7 @@ namespace ICSharpCode.Decompiler.Tests
 		async Task Run([CallerMemberName] string testName = null, AssemblerOptions asmOptions = AssemblerOptions.None, CompilerOptions cscOptions = CompilerOptions.None, DecompilerSettings decompilerSettings = null)
 		{
 			var csFile = Path.Combine(TestCasePath, testName + ".cs");
-			var exeFile = Path.Combine(TestCasePath, testName) + Tester.GetSuffix(cscOptions) + ".exe";
+			var exeFile = TestsAssemblyOutput.GetFilePath(TestCasePath, testName, Tester.GetSuffix(cscOptions) + ".exe");
 			if (cscOptions.HasFlag(CompilerOptions.Library))
 			{
 				exeFile = Path.ChangeExtension(exeFile, ".dll");
@@ -725,7 +736,7 @@ namespace ICSharpCode.Decompiler.Tests
 			var decompiled = await Tester.DecompileCSharp(exeFile, decompilerSettings ?? Tester.GetSettings(cscOptions)).ConfigureAwait(false);
 
 			// 3. Compile
-			CodeAssert.FilesAreEqual(csFile, decompiled, Tester.GetPreprocessorSymbols(cscOptions).ToArray());
+			CodeAssert.FilesAreEqual(csFile, decompiled, Tester.GetPreprocessorSymbols(cscOptions).Append("EXPECTED_OUTPUT").ToArray());
 			Tester.RepeatOnIOError(() => File.Delete(decompiled));
 		}
 	}

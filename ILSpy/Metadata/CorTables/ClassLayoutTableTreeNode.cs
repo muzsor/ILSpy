@@ -16,46 +16,39 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.Disassembler;
-using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 
 namespace ICSharpCode.ILSpy.Metadata
 {
 	class ClassLayoutTableTreeNode : MetadataTableTreeNode
 	{
-		public ClassLayoutTableTreeNode(PEFile module)
-			: base((HandleKind)0x0F, module)
+		public ClassLayoutTableTreeNode(MetadataFile metadataFile)
+			: base(TableIndex.ClassLayout, metadataFile)
 		{
 		}
 
-		public override object Text => $"0F ClassLayout ({module.Metadata.GetTableRowCount(TableIndex.ClassLayout)})";
-
-		public override object Icon => Images.Literal;
-
-		public unsafe override bool View(ViewModels.TabPageModel tabPage)
+		public override bool View(ViewModels.TabPageModel tabPage)
 		{
 			tabPage.Title = Text.ToString();
 			tabPage.SupportsLanguageSwitching = false;
 
 			var view = Helpers.PrepareDataGrid(tabPage, this);
-			var metadata = module.Metadata;
 
 			var list = new List<ClassLayoutEntry>();
 
-			var length = metadata.GetTableRowCount(TableIndex.ClassLayout);
-			byte* ptr = metadata.MetadataPointer;
-			int metadataOffset = module.Reader.PEHeaders.MetadataStartOffset;
+			var length = metadataFile.Metadata.GetTableRowCount(TableIndex.ClassLayout);
+			ReadOnlySpan<byte> ptr = metadataFile.Metadata.AsReadOnlySpan();
 			ClassLayoutEntry scrollTargetEntry = default;
 
 			for (int rid = 1; rid <= length; rid++)
 			{
-				ClassLayoutEntry entry = new ClassLayoutEntry(module, ptr, metadataOffset, rid);
+				ClassLayoutEntry entry = new ClassLayoutEntry(metadataFile, ptr, rid);
 				if (scrollTarget == rid)
 				{
 					scrollTargetEntry = entry;
@@ -80,18 +73,17 @@ namespace ICSharpCode.ILSpy.Metadata
 			public readonly EntityHandle Parent;
 			public readonly uint ClassSize;
 
-			public unsafe ClassLayout(byte* ptr, int typeDefSize)
+			public ClassLayout(ReadOnlySpan<byte> ptr, int typeDefSize)
 			{
-				PackingSize = (ushort)Helpers.GetValue(ptr, 2);
-				ClassSize = (uint)Helpers.GetValue(ptr + 2, 4);
-				Parent = MetadataTokens.TypeDefinitionHandle(Helpers.GetValue(ptr + 6, typeDefSize));
+				PackingSize = BinaryPrimitives.ReadUInt16LittleEndian(ptr);
+				ClassSize = BinaryPrimitives.ReadUInt32LittleEndian(ptr.Slice(2, 4));
+				Parent = MetadataTokens.TypeDefinitionHandle(Helpers.GetValueLittleEndian(ptr.Slice(6, typeDefSize)));
 			}
 		}
 
-		unsafe struct ClassLayoutEntry
+		struct ClassLayoutEntry
 		{
-			readonly PEFile module;
-			readonly MetadataReader metadata;
+			readonly MetadataFile metadataFile;
 			readonly ClassLayout classLayout;
 
 			public int RID { get; }
@@ -100,45 +92,34 @@ namespace ICSharpCode.ILSpy.Metadata
 
 			public int Offset { get; }
 
-			[StringFormat("X8")]
-			[LinkToTable]
+			[ColumnInfo("X8", Kind = ColumnKind.Token)]
 			public int Parent => MetadataTokens.GetToken(classLayout.Parent);
 
 			public void OnParentClick()
 			{
-				MainWindow.Instance.JumpToReference(new EntityReference(module, classLayout.Parent, protocol: "metadata"));
+				MessageBus.Send(this, new NavigateToReferenceEventArgs(new EntityReference("metadata", classLayout.Parent)));
 			}
 
-			public string ParentTooltip {
-				get {
-					ITextOutput output = new PlainTextOutput();
-					var context = new MetadataGenericContext(default(TypeDefinitionHandle), module);
-					((EntityHandle)classLayout.Parent).WriteTo(module, output, context);
-					return output.ToString();
-				}
-			}
+			string parentTooltip;
+			public string ParentTooltip => GenerateTooltip(ref parentTooltip, metadataFile, classLayout.Parent);
 
-			[StringFormat("X4")]
+			[ColumnInfo("X4", Kind = ColumnKind.Other)]
 			public ushort PackingSize => classLayout.PackingSize;
 
-			[StringFormat("X8")]
+			[ColumnInfo("X8", Kind = ColumnKind.Other)]
 			public uint ClassSize => classLayout.ClassSize;
 
-			public ClassLayoutEntry(PEFile module, byte* ptr, int metadataOffset, int row)
+			public ClassLayoutEntry(MetadataFile metadataFile, ReadOnlySpan<byte> ptr, int row)
 			{
-				this.module = module;
-				this.metadata = module.Metadata;
+				this.metadataFile = metadataFile;
 				this.RID = row;
+				var metadata = metadataFile.Metadata;
 				var rowOffset = metadata.GetTableMetadataOffset(TableIndex.ClassLayout)
 					+ metadata.GetTableRowSize(TableIndex.ClassLayout) * (row - 1);
-				this.Offset = metadataOffset + rowOffset;
-				this.classLayout = new ClassLayout(ptr + rowOffset, metadata.GetTableRowCount(TableIndex.TypeDef) < ushort.MaxValue ? 2 : 4);
+				this.Offset = metadataFile.MetadataOffset + rowOffset;
+				this.classLayout = new ClassLayout(ptr.Slice(rowOffset), metadata.GetTableRowCount(TableIndex.TypeDef) < ushort.MaxValue ? 2 : 4);
+				this.parentTooltip = null;
 			}
-		}
-
-		public override void Decompile(Language language, ITextOutput output, DecompilationOptions options)
-		{
-			language.WriteCommentLine(output, "ClassLayouts");
 		}
 	}
 }

@@ -205,7 +205,11 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 		{
 			foreach (var stmt in rootNode.DescendantsAndSelf.OfType<ExpressionStatement>())
 			{
-				if (!IsValidInStatementExpression(stmt.Expression))
+				if (stmt.Expression is DirectionExpression dir && IsValidInStatementExpression(dir.Expression))
+				{
+					stmt.Expression = dir.Expression.Detach();
+				}
+				else if (!IsValidInStatementExpression(stmt.Expression))
 				{
 					// fetch ILFunction
 					var function = stmt.Ancestors.SelectMany(a => a.Annotations.OfType<ILFunction>()).First(f => f.Parent == null);
@@ -476,6 +480,7 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 					Debug.Assert(point1.level == point2.level);
 					if (point1.nextNode.Parent == point2.nextNode.Parent)
 					{
+						Debug.Assert(prev.Type.Equals(v.Type));
 						// We found a collision!
 						v.InvolvedInCollision = true;
 						prev.ReplacementDueToCollision = v;

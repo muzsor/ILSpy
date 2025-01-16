@@ -29,11 +29,12 @@ using CliWrap;
 using ICSharpCode.Decompiler.CSharp;
 using ICSharpCode.Decompiler.CSharp.ProjectDecompiler;
 using ICSharpCode.Decompiler.Metadata;
+using ICSharpCode.Decompiler.Tests;
 using ICSharpCode.Decompiler.Tests.Helpers;
 
 using NUnit.Framework;
 
-namespace ICSharpCode.Decompiler.Tests
+namespace ICSharpCode.Decompiler.Roundtrip
 {
 	[TestFixture, Parallelizable(ParallelScope.All)]
 	public class RoundtripAssembly
@@ -212,7 +213,7 @@ namespace ICSharpCode.Decompiler.Tests
 					File.Copy(file, Path.Combine(outputDir, relFile));
 				}
 			}
-			Assert.IsNotNull(projectFile, $"Could not find {fileToRoundtrip}");
+			Assert.That(projectFile, Is.Not.Null, $"Could not find {fileToRoundtrip}");
 
 			await Compile(projectFile, outputDir);
 			testAction(outputDir);
@@ -289,8 +290,8 @@ namespace ICSharpCode.Decompiler.Tests
 
 		class TestProjectDecompiler : WholeProjectDecompiler
 		{
-			public TestProjectDecompiler(Guid projecGuid, IAssemblyResolver resolver, AssemblyReferenceClassifier assemblyReferenceClassifier, DecompilerSettings settings)
-				: base(settings, projecGuid, resolver, assemblyReferenceClassifier, debugInfoProvider: null)
+			public TestProjectDecompiler(Guid projectGuid, IAssemblyResolver resolver, AssemblyReferenceClassifier assemblyReferenceClassifier, DecompilerSettings settings)
+				: base(settings, projectGuid, resolver, null, assemblyReferenceClassifier, debugInfoProvider: null)
 			{
 			}
 		}
